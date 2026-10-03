@@ -1,19 +1,25 @@
 # Solutions
 
-## Ubuntu: openfortivpn in a network namespace
-The namespace `office` has its own routing table and resolv.conf. openfortivpn runs inside it, so its default route and DNS apply only to processes started in that namespace. The host and ExpressVPN are untouched.
+## Ubuntu: openfortivpn in a network namespace (tested by hand, working)
+The namespace `office` has its own routing table, resolv.conf and firewall, and a macvlan NIC on the LAN. openfortivpn runs inside it, so its routes and DNS apply only to processes started in that namespace. ExpressVPN's rules live in the host namespace and never see it; that avoids both ExpressVPN's port 53 block and its habit of routing the Fortigate gateway through its own tunnel.
 
-Traffic path: app in `office` -> veth -> host (NAT) -> host default route -> FortiGate gateway -> ppp0 inside `office`.
-If ExpressVPN is connected on the host, the FortiGate handshake leaves through ExpressVPN. If the gateway blocks VPN exit IPs, exclude the gateway IP in ExpressVPN or route it via the physical NIC.
+![Ubuntu design: openfortivpn in the office namespace, ExpressVPN in the host namespace](images/ubuntu-namespace-design.svg)
 
-Usage:
+*The office namespace has its own NIC on the LAN, so the Fortigate handshake never uses ExpressVPN.*
+
+Test result (2026-10-03): wired (by hand, macvlan) and Wi-Fi (through the script, ipvlan) both worked. Gateway pings from the namespace at TTL 247 (2 to 13 ms), tunnel up and stable for about 10 minutes wired and about 15 minutes on Wi-Fi, internal DNS (picked up automatically) and TCP to the git host work. Not yet tested for hours, with `git`/`ssh`/browser as the normal user, after a reboot, or when switching back to wired.
+
+Usage (the script detects interface, gateway, link type, a free address and the office DNS servers itself; run on Wi-Fi):
 ```
 sudo ./scripts/office-netns.sh up
-sudo ./scripts/office-netns.sh vpn vpn.example.com:443 your.user   # prompts for password
-sudo ip netns exec office sudo -u $USER ssh host.corp.example
+sudo ./scripts/office-netns.sh vpn                  # prompts for the VPN password
+sudo ./scripts/office-netns.sh run ssh user@10.30.x.x
+sudo ./scripts/office-netns.sh refresh              # after switching LAN <-> Wi-Fi, then run vpn again
 sudo ./scripts/office-netns.sh down
 ```
-Install: `sudo apt install openfortivpn`.
+Install: `sudo apt install openfortivpn iputils-arping`. Full commands, test results, limits and what did not work are in [ubuntu-README.md](ubuntu-README.md).
+
+Limits: wired and Wi-Fi are tested on one network; a network change needs `refresh` and a new tunnel; only processes started in the namespace reach the intranet. The earlier veth + NAT variant was not needed and was not tested.
 
 ## Windows: FortiClient with ExpressVPN (tested and working)
 See [windows-README.md](windows-README.md) for the full tested procedure. In short:
