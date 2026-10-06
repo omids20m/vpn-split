@@ -2,7 +2,7 @@
 
 Ubuntu counterpart of [windows-README.md](windows-README.md): ExpressVPN for general traffic, openfortivpn for the `office-domain.example` intranet.
 
-**Status (2026-10-03):** Working with a network namespace, on wired and on Wi-Fi. openfortivpn runs inside a namespace with its own NIC on the LAN; ExpressVPN stays connected on the host. Wired (macvlan, commands run by hand): about 10 minutes, about 290 pings to the Fortigate, all TTL 247, tunnel never dropped. Wi-Fi (ipvlan, run through `scripts/office-netns.sh`): the script detected the interface, gateway, link type and a free address, the tunnel came up, the DNS servers were picked up automatically, and a soak of about 15 minutes (about 445 pings) stayed at TTL 247 with no drop. Not yet tested: a long soak (hours), `git`, `ssh` and a browser as the normal user, a reboot, and switching back from Wi-Fi to wired with `refresh`.
+**Status (2026-10-03):** Working with a network namespace, on wired and on Wi-Fi. openfortivpn runs inside a namespace with its own NIC on the LAN; ExpressVPN stays connected on the host. Wired (macvlan, commands run by hand): about 10 minutes, about 290 pings to the Fortigate, all TTL 247, tunnel never dropped. Wi-Fi (ipvlan, run through `scripts/office-netns.sh`): the script detected the interface, gateway, link type and a free address, the tunnel came up, the DNS servers were picked up automatically, and a soak of about 15 minutes (about 445 pings) stayed at TTL 247 with no drop. Wired through the script, with Wi-Fi also connected: the script chose the wired interface and `macvlan`, the tunnel came up, DNS was set automatically, and the Fortigate path stayed at TTL 247 for about 12 minutes (about 353 pings, 1.6 to 4.8 ms). Not yet tested: a long soak (hours), `git`, `ssh` and a browser as the normal user, and a reboot.
 
 ## Environment
 
@@ -50,7 +50,7 @@ sudo ./scripts/office-netns.sh run ssh user@10.30.x.x
 ```
 Overrides if detection is wrong: `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR`, `OFFICE_LINK` (macvlan or ipvlan), `OFFICE_SEARCH` (DNS search suffix), `OFFICE_CONFIG`. The `ip-up.d` DNS hook must stay disabled (step 2 below).
 
-Run on Wi-Fi (2026-10-03): `refresh` chose `wlo1`, `ipvlan`, `192.168.0.253/24` via `192.168.0.254`; `vpn` came up and wrote `10.30.63.3` and `10.30.63.2` into the namespace's `resolv.conf` by itself. Not run yet: the wired path through the script (it was tested by hand), and `down` followed by `up` on a different network.
+Run on Wi-Fi (2026-10-03): `refresh` chose `wlo1`, `ipvlan`, `192.168.0.253/24` via `192.168.0.254`; `vpn` came up and wrote `10.30.63.3` and `10.30.63.2` into the namespace's `resolv.conf` by itself. Wired run through the script (Wi-Fi also connected): `refresh` chose `eno2`, `macvlan`, `192.168.0.253/24`, because the wired default route has the lower metric (20100 against 20600). Not run yet: a reboot, and `git`/`ssh` through `run`.
 
 ### Switching between LAN and Wi-Fi
 
@@ -142,11 +142,24 @@ Wi-Fi run through the script (same day):
 | `status` | `ppp0` present; `10.30.0.0/16` and `10.31.0.0/16` on `ppp0`; Fortigate via the LAN gateway on `of-office` |
 | `getent hosts git.office-domain.example` / `nc -zv git.office-domain.example 443` | `10.30.63.20` / succeeded |
 | Soak: ping every 2 s, about 15 minutes | ~445 replies, all TTL 247, ~2 to 13 ms, tunnel stayed up |
-| Host `curl ifconfig.me` on Wi-Fi | not confirmed (output was cut off in the screenshot) |
+| Host `curl ifconfig.me` on Wi-Fi | `198.51.100.227`, same /24 as the earlier ExpressVPN exit (`198.51.100.122`), so ExpressVPN is still in use on the host |
+| Second `refresh` + `vpn` on Wi-Fi | same address (`192.168.0.253/24`) reused, tunnel up again, DNS set again automatically |
+
+Wired run through the script with Wi-Fi also connected (same day):
+
+| Check | Result |
+|---|---|
+| `refresh` detection | `eno2`, `macvlan`, `192.168.0.253/24` via `192.168.0.254` (wired wins by metric) |
+| `ping` Fortigate from the namespace | 10 of 10, TTL 247, 1.7 to 4.8 ms |
+| `vpn` | "Tunnel is up and running"; DNS set automatically to `10.30.63.3`, `10.30.63.2` |
+| `status` | `ppp0` present; `10.30.0.0/16` and `10.31.0.0/16` on `ppp0`; Fortigate via the LAN gateway on `of-office` |
+| `getent hosts git.office-domain.example` | `10.30.63.20` |
+| Host `curl ifconfig.me` | `198.51.100.13`, same `198.51.100.x` range as the earlier ExpressVPN exits |
+| Soak: ping every 2 s, about 12 minutes | reached icmp_seq 353, TTL 247 and 1.6 to 4.8 ms in the part reviewed (the last 19 lines; the summary line was not captured) |
 
 ## Limits
 
-- Wired macvlan (by hand) and Wi-Fi ipvlan (through the script) are tested on one home network. Access points with client isolation or captive portals will block it. Some routers limit MAC addresses per port.
+- Wired macvlan (by hand and through the script) and Wi-Fi ipvlan (through the script) are tested on one home network. Access points with client isolation or captive portals will block it. Some routers limit MAC addresses per port.
 - The namespace and the tunnel do not survive a reboot or a network change; run `refresh` and `vpn` again.
 - Needs a spare LAN address (picked and checked automatically; a DHCP server could still hand it out later if it is inside the pool).
 - Office apps must be started through the namespace; the normal desktop session cannot reach the intranet.

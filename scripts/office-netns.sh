@@ -17,7 +17,8 @@
 #
 # After switching networks (LAN to Wi-Fi or back) run "refresh", then "vpn" again.
 # Status: run on Wi-Fi (ipvlan) with address auto-selection and DNS auto-detection, tunnel stable for about
-# 15 minutes. The wired path was tested by hand with the equivalent ip commands, not yet through this script.
+# 15 minutes. The wired path (macvlan) was also run through this script, with Wi-Fi connected, and the
+# Fortigate path stayed stable for about 12 minutes.
 set -eEuo pipefail
 
 NS="${OFFICE_NS:-office}"
