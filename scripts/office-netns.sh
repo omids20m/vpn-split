@@ -16,6 +16,7 @@
 #            OFFICE_CONFIG, OFFICE_NS, OFFICE_SEARCH (DNS search suffix), OFFICE_WAIT (seconds to wait for an uplink).
 #
 # After switching networks (LAN to Wi-Fi or back) run "refresh", then "vpn" again.
+# "vpn" checks this itself and stops with a clear message if the namespace is stale or has no carrier.
 # Status: run on Wi-Fi (ipvlan) with address auto-selection and DNS auto-detection, tunnel stable for about
 # 15 minutes. The wired path (macvlan) was also run through this script, with Wi-Fi connected, and the
 # Fortigate path stayed stable for about 12 minutes.
@@ -27,6 +28,7 @@ STATE_DIR="${OFFICE_STATE_DIR:-/var/lib/office-netns}"
 RUN_STATE="/run/office-netns.state"
 VPN_LOG="/run/office-netns-vpn.log"
 LINK="of-$NS"
+WATCHER_PID=""      # global on purpose: the EXIT trap runs after vpn() has returned, when a "local" would be gone
 
 die() { echo "office-netns: $*" >&2; exit 1; }
 ns_exists() { ip netns list | grep -qw "$NS"; }
@@ -151,12 +153,36 @@ up() {
   echo "check: ip netns exec $NS ping -c 5 <fortigate-ip>   # want the same low TTL as from the host without ExpressVPN"
 }
 
+cleanup_watcher() {
+  if [ -n "${WATCHER_PID:-}" ]; then kill "$WATCHER_PID" 2>/dev/null || true; fi
+}
+
+# Refuse to start the tunnel when the namespace no longer matches the network the host is on
+# (moved to another LAN or Wi-Fi, uplink changed, or the link has no carrier). Without this the
+# symptom is openfortivpn failing with "connect: No route to host".
+check_uplink() {
+  local s_iface="" s_gw="" c_iface="" c_gw="" link_info
+  link_info=$(ip -n "$NS" link show "$LINK" 2>/dev/null || true)
+  case "$link_info" in
+    *NO-CARRIER*) die "$LINK in namespace $NS has no carrier (the uplink went away or changed); run '$0 refresh' and try again" ;;
+  esac
+  if [ -z "${OFFICE_IFACE:-}" ] && [ -r "$RUN_STATE" ]; then
+    read -r s_iface _ _ s_gw < "$RUN_STATE" || true
+    read -r c_iface c_gw < <(detect_uplink) || true
+    c_gw=${OFFICE_GW:-$c_gw}
+    if [ -n "$c_iface" ] && { [ "$c_iface" != "$s_iface" ] || [ "$c_gw" != "$s_gw" ]; }; then
+      die "the host uplink changed ($s_iface via $s_gw is now $c_iface via $c_gw); run '$0 refresh' and try again"
+    fi
+  fi
+}
+
 vpn() {
   ns_exists || die "namespace $NS is not up; run '$0 up' first"
   command -v script >/dev/null || die "'script' (util-linux) not found"
+  check_uplink
   : > "$VPN_LOG"; chmod 600 "$VPN_LOG"
-  watch_dns & local watcher=$!
-  trap 'kill "$watcher" 2>/dev/null || true' EXIT
+  watch_dns & WATCHER_PID=$!
+  trap cleanup_watcher EXIT
   local cmd
   cmd=$(printf '%q ' ip netns exec "$NS" openfortivpn -c "$CONFIG" --set-dns=0 --pppd-use-peerdns=0 "$@")
   script -q -e -f -c "$cmd" "$VPN_LOG"
