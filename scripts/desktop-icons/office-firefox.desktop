@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Firefox (Office VPN)
+Comment=Firefox inside the office network namespace
+Exec=gnome-terminal --geometry=90x5 --title="Office Firefox" -- sudo bash /mnt/e/repos/office-net/scripts/office-netns.sh run /home/omid/firefox-office/firefox -no-remote -profile /home/omid/.mozilla-office
+Icon=/home/omid/firefox-office/browser/chrome/icons/default/default128.png
+Terminal=false
+Categories=Network;

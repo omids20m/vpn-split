@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=VS Code (Office VPN)
+Comment=VS Code inside the office network namespace
+Exec=gnome-terminal --geometry=90x5 --title="Office VS Code" -- sudo bash /mnt/e/repos/office-net/scripts/office-netns.sh run code --new-window --user-data-dir /home/omid/.vscode-office --extensions-dir /home/omid/.vscode/extensions
+Icon=vscode
+Terminal=false
+Categories=Development;

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal (Office VPN)
+Comment=Shell running inside the office network namespace
+Exec=gnome-terminal --title="Office Terminal" -- sudo bash /mnt/e/repos/office-net/scripts/office-netns.sh run bash --rcfile /home/omid/bin/office-bashrc -i
+Icon=utilities-terminal
+Terminal=false
+Categories=Network;
