@@ -2,7 +2,7 @@
 # openfortivpn inside a network namespace with its own NIC on the LAN, so
 # ExpressVPN's routes and firewall on the host never see it.
 #
-# Usage (as root): office-netns.sh up | vpn [openfortivpn args] | run <cmd...> | status | refresh | down
+# Usage (as root): office-netns.sh up | vpn [openfortivpn args] | run <cmd...> | ensure | status | refresh | down
 #
 # Everything network-specific is detected automatically:
 #   uplink interface   physical interface with the lowest-metric default route (wired wins over Wi-Fi)
@@ -15,8 +15,10 @@
 # Overrides: OFFICE_IFACE, OFFICE_GW, OFFICE_ADDR (e.g. 192.168.0.200/24), OFFICE_LINK (macvlan|ipvlan),
 #            OFFICE_CONFIG, OFFICE_NS, OFFICE_SEARCH (DNS search suffix), OFFICE_WAIT (seconds to wait for an uplink).
 #
-# After switching networks (LAN to Wi-Fi or back) run "refresh", then "vpn" again.
-# "vpn" checks this itself and stops with a clear message if the namespace is stale or has no carrier.
+# "vpn" creates the namespace if it is missing and rebuilds it if it no longer matches the network
+# (no carrier, or the uplink interface or gateway changed, e.g. after switching LAN <-> Wi-Fi), as long
+# as no tunnel is running. "ensure" does the same without starting the tunnel.
+# OFFICE_NO_AUTO_REFRESH=1 makes both stop with a message instead of rebuilding.
 # Status: run on Wi-Fi (ipvlan) with address auto-selection and DNS auto-detection, tunnel stable for about
 # 15 minutes. The wired path (macvlan) was also run through this script, with Wi-Fi connected, and the
 # Fortigate path stayed stable for about 12 minutes.
@@ -157,29 +159,53 @@ cleanup_watcher() {
   if [ -n "${WATCHER_PID:-}" ]; then kill "$WATCHER_PID" 2>/dev/null || true; fi
 }
 
-# Refuse to start the tunnel when the namespace no longer matches the network the host is on
-# (moved to another LAN or Wi-Fi, uplink changed, or the link has no carrier). Without this the
-# symptom is openfortivpn failing with "connect: No route to host".
-check_uplink() {
+# Prints why the namespace no longer matches the network the host is on (moved to another LAN or
+# Wi-Fi, uplink changed, or the link has no carrier) and returns 0; returns 1 when it still matches.
+# Starting the tunnel in a stale namespace fails with "connect: No route to host".
+uplink_problem() {
   local s_iface="" s_gw="" c_iface="" c_gw="" link_info
   link_info=$(ip -n "$NS" link show "$LINK" 2>/dev/null || true)
   case "$link_info" in
-    *NO-CARRIER*) die "$LINK in namespace $NS has no carrier (the uplink went away or changed); run '$0 refresh' and try again" ;;
+    "") echo "$LINK is missing in namespace $NS"; return 0 ;;
+    *NO-CARRIER*) echo "$LINK in namespace $NS has no carrier (the uplink went away or changed)"; return 0 ;;
   esac
   if [ -z "${OFFICE_IFACE:-}" ] && [ -r "$RUN_STATE" ]; then
     read -r s_iface _ _ s_gw < "$RUN_STATE" || true
     read -r c_iface c_gw < <(detect_uplink) || true
     c_gw=${OFFICE_GW:-$c_gw}
     if [ -n "$c_iface" ] && { [ "$c_iface" != "$s_iface" ] || [ "$c_gw" != "$s_gw" ]; }; then
-      die "the host uplink changed ($s_iface via $s_gw is now $c_iface via $c_gw); run '$0 refresh' and try again"
+      echo "the host uplink changed ($s_iface via $s_gw is now $c_iface via $c_gw)"; return 0
     fi
+  fi
+  return 1
+}
+
+# Make sure the namespace exists and matches the current network: create it if missing, rebuild it
+# if stale. A running tunnel is left alone. Set OFFICE_NO_AUTO_REFRESH=1 to stop instead of rebuilding.
+ensure() {
+  local why
+  if ! ns_exists; then
+    echo "office-netns: namespace $NS is not up, creating it"
+    up; return
+  fi
+  if ip -n "$NS" link show ppp0 >/dev/null 2>&1; then
+    echo "office-netns: tunnel is already up in $NS"; return
+  fi
+  if why=$(uplink_problem); then
+    [ -z "${OFFICE_NO_AUTO_REFRESH:-}" ] || die "$why; run '$0 refresh' and try again"
+    echo "office-netns: $why; rebuilding namespace $NS (programs still running in it are stopped)"
+    down; up
+  else
+    echo "office-netns: namespace $NS matches the current network, reusing it"
   fi
 }
 
 vpn() {
-  ns_exists || die "namespace $NS is not up; run '$0 up' first"
   command -v script >/dev/null || die "'script' (util-linux) not found"
-  check_uplink
+  ensure
+  if ip -n "$NS" link show ppp0 >/dev/null 2>&1; then
+    die "the tunnel is already running in $NS (see '$0 status'); stop it first to start another"
+  fi
   : > "$VPN_LOG"; chmod 600 "$VPN_LOG"
   watch_dns & WATCHER_PID=$!
   trap cleanup_watcher EXIT
@@ -219,10 +245,11 @@ main() {
     up) up ;;
     vpn) shift; vpn "$@" ;;
     run) shift; run "$@" ;;
+    ensure) ensure ;;
     status) status ;;
     refresh) down; up; echo "restart the tunnel with: $0 vpn" ;;
     down) down ;;
-    *) echo "Usage: $0 up | vpn [args] | run <cmd...> | status | refresh | down" >&2; exit 1 ;;
+    *) echo "Usage: $0 up | vpn [args] | run <cmd...> | ensure | status | refresh | down" >&2; exit 1 ;;
   esac
 }
 
