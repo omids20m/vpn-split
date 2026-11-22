@@ -11,11 +11,11 @@ Test result (2026-10-03): wired (by hand, macvlan) and Wi-Fi (through the script
 
 Usage (the script detects interface, gateway, link type, a free address and the office DNS servers itself; run on Wi-Fi):
 ```
-sudo ./scripts/office-netns.sh up
-sudo ./scripts/office-netns.sh vpn                  # prompts for the VPN password
-sudo ./scripts/office-netns.sh run ssh user@10.30.x.x
-sudo ./scripts/office-netns.sh refresh              # after switching LAN <-> Wi-Fi, then run vpn again
-sudo ./scripts/office-netns.sh down
+sudo office-netns up
+sudo office-netns vpn                  # prompts for the VPN password
+sudo office-netns run ssh user@<office-host>
+sudo office-netns refresh              # after switching LAN <-> Wi-Fi, then run vpn again
+sudo office-netns down
 ```
 Install: `sudo apt install openfortivpn iputils-arping`. Full commands, test results, limits and what did not work are in [ubuntu-README.md](ubuntu-README.md).
 

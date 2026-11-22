@@ -16,6 +16,20 @@ intranet through the FortiClient SSL-VPN tunnel.
 
 ---
 
+## Values used in the commands
+
+The commands below use PowerShell variables instead of addresses. Set them once per window; they are read from your own (git-ignored) `scripts\office-dns.psd1`, see [expressvpn-fortigate-windows-dns.md](expressvpn-fortigate-windows-dns.md):
+
+```powershell
+$cfg        = Import-PowerShellDataFile E:\repos\office-net\scripts\office-dns.psd1
+$Dns        = @($cfg.Resolvers)                 # internal DNS servers
+$Domain     = @($cfg.DnsSuffix)[0]              # first internal suffix
+$OfficeHost = "git.$Domain"                     # any internal host name
+$Forti      = 'Ethernet 4 Forti'                # FortiClient adapter (Get-NetAdapter shows yours)
+$CorpRoutes = { param($r) $r.DestinationPrefix -like '10.3[01].*' }   # your corporate ranges; adjust the pattern
+```
+Addresses that still appear in this doc (`203.0.113.10`, `10.30.x.x`, `198.51.100.x`, `192.168.x.x`) are placeholders in recorded output, not values to type.
+
 ## The three problems, and what actually solves each
 
 There is no URL/domain-based split tunneling in ExpressVPN on Windows. Splitting is
@@ -87,7 +101,7 @@ looking like a DNS failure.
 ### NRPT rule (run in an elevated PowerShell)
 
 ```powershell
-Add-DnsClientNrptRule -Namespace ".office-domain.example" -NameServers "10.30.63.3","10.30.63.2"
+Add-DnsClientNrptRule -Namespace ".$Domain" -NameServers $Dns
 ```
 
 The leading dot matches the suffix and everything under it. Elevation is required —
@@ -96,7 +110,7 @@ without it you get *"Failed to load the NRPT information."*
 Verify:
 
 ```powershell
-Get-DnsClientNrptRule | Where-Object Namespace -like "*office-domain*"
+Get-DnsClientNrptRule | Where-Object Namespace -like "*$Domain"
 ```
 
 > `Get-DnsClientNrptRule` has no `-Namespace` parameter. Filter with `Where-Object`.
@@ -130,8 +144,8 @@ Forti's routes then land last and its adapter metric ends up lowest
 ### Is DNS working?
 
 ```powershell
-Resolve-DnsName git.office-domain.example -Server 10.30.63.3
-Resolve-DnsName git.office-domain.example
+Resolve-DnsName $OfficeHost -Server $Dns[0]
+Resolve-DnsName $OfficeHost
 ```
 
 Both should return `10.30.63.20`.
@@ -144,7 +158,7 @@ Both should return `10.30.63.20`.
 
 ```powershell
 Get-NetRoute -AddressFamily IPv4 |
-  Where-Object { $_.DestinationPrefix -like "10.3*" } |
+  Where-Object { & $CorpRoutes $_ } |
   Sort-Object DestinationPrefix |
   Format-Table DestinationPrefix,InterfaceAlias,NextHop,RouteMetric -AutoSize
 ```
@@ -153,13 +167,13 @@ Every `10.30.*` / `10.31.*` prefix should point at `Ethernet 4 Forti`.
 Any of them pointing at `192.168.10.1` is an ExpressVPN bypass rule that must be removed.
 
 ```powershell
-Find-NetRoute -RemoteIPAddress 10.30.63.20
+Find-NetRoute -RemoteIPAddress (Resolve-DnsName $OfficeHost -Type A)[0].IPAddress
 ```
 
 ### Does it actually connect?
 
 ```powershell
-Test-NetConnection -ComputerName git.office-domain.example -Port 443
+Test-NetConnection -ComputerName $OfficeHost -Port 443
 ```
 
 Want: `TcpTestSucceeded : True` and `InterfaceAlias : Ethernet 4 Forti`.
@@ -183,11 +197,12 @@ Only relevant if the route check above shows a `10.30.*` / `10.31.*` prefix poin
 on the next reconnect. The real fix is removing the entry from the app's IP list.
 
 ```powershell
-route delete 10.30.63.0 mask 255.255.255.0
-route delete 10.31.150.0 mask 255.255.255.0
+# corporate routes that point anywhere but the Forti adapter (the ExpressVPN bypass routes)
+Get-NetRoute -AddressFamily IPv4 | Where-Object { (& $CorpRoutes $_) -and $_.InterfaceAlias -ne $Forti } |
+  Remove-NetRoute -Confirm:$false
 ```
 
-`The route deletion failed: Element not found` means the route isn't there — which is the
+No output and no error means there was nothing to remove (with `route delete`, `The route deletion failed: Element not found` means the same) — which is the
 healthy state, not an error.
 
 ---
@@ -234,7 +249,7 @@ Removes the DNS override for `.office-domain.example`. This is the only change t
 Windows itself.
 
 ```powershell
-Get-DnsClientNrptRule | Where-Object Namespace -like "*office-domain*" | Remove-DnsClientNrptRule -Force
+Get-DnsClientNrptRule | Where-Object Namespace -like "*$Domain" | Remove-DnsClientNrptRule -Force
 ```
 
 Or by GUID, if you prefer to be explicit:
@@ -252,7 +267,7 @@ ipconfig /flushdns
 Confirm it's gone — this should return nothing:
 
 ```powershell
-Get-DnsClientNrptRule | Where-Object Namespace -like "*office-domain*"
+Get-DnsClientNrptRule | Where-Object Namespace -like "*$Domain"
 ```
 
 ### 2. Revert ExpressVPN split tunneling
@@ -280,7 +295,7 @@ whether or not the NRPT rule is present.
 ### 4. Restore the `8.8.8.8` resolver (only if you removed it)
 
 ```powershell
-Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses "10.30.63.3","10.30.63.2","8.8.8.8"
+Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses ($Dns + "8.8.8.8")
 ```
 
 To hand the adapter back to DHCP entirely:
@@ -295,11 +310,11 @@ Routes from either client are held in the ActiveStore and do not survive a reboo
 stale one is stuck, disconnect both VPNs and reconnect, or:
 
 ```powershell
-route delete 10.30.63.0 mask 255.255.255.0
-route delete 10.31.150.0 mask 255.255.255.0
+# with both VPNs disconnected: any corporate route left over
+Get-NetRoute -AddressFamily IPv4 | Where-Object { & $CorpRoutes $_ } | Remove-NetRoute -Confirm:$false
 ```
 
-`Element not found` means there was nothing to remove.
+No output means there was nothing to remove.
 
 ### Confirm you're back to baseline
 
@@ -307,7 +322,7 @@ With both VPNs disconnected:
 
 ```powershell
 Get-DnsClientNrptRule
-Get-NetRoute -AddressFamily IPv4 | Where-Object { $_.DestinationPrefix -like "10.3*" }
+Get-NetRoute -AddressFamily IPv4 | Where-Object { & $CorpRoutes $_ }
 ```
 
 Both should return nothing. Anything left over is from a client that is still running.

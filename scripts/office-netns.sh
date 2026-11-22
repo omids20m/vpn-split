@@ -12,8 +12,10 @@
 #   office address     unused address near the top of the subnet, checked with arping; reused next
 #                      time on the same network
 #   office DNS         the servers the Fortigate announces after login (read from openfortivpn's output)
-# Overrides: OFFICE_IFACE, OFFICE_GW, OFFICE_ADDR (e.g. 192.168.0.200/24), OFFICE_LINK (macvlan|ipvlan),
-#            OFFICE_CONFIG, OFFICE_NS, OFFICE_SEARCH (DNS search suffix), OFFICE_WAIT (seconds to wait for an uplink).
+# Overrides: OFFICE_IFACE, OFFICE_GW, OFFICE_ADDR (CIDR, e.g. 192.0.2.200/24), OFFICE_LINK (macvlan|ipvlan),
+#            OFFICE_CONFIG, OFFICE_NS, OFFICE_SEARCH (DNS search suffixes, space- or comma-separated), OFFICE_WAIT (seconds to wait for an uplink).
+#            Set them in the environment or in /etc/office-net.conf (OFFICE_SITE_CONF); nothing site-specific
+#            (addresses, domains) is hard-coded here.
 #
 # "vpn" creates the namespace if it is missing and rebuilds it if it no longer matches the network
 # (no carrier, or the uplink interface or gateway changed, e.g. after switching LAN <-> Wi-Fi), as long
@@ -23,6 +25,21 @@
 # 15 minutes. The wired path (macvlan) was also run through this script, with Wi-Fi connected, and the
 # Fortigate path stayed stable for about 12 minutes.
 set -eEuo pipefail
+
+# Optional site settings. Only read when owned by root and not writable by group/others, because this
+# script runs as root; values already in the environment win.
+SITE_CONF="${OFFICE_SITE_CONF:-/etc/office-net.conf}"
+if [ -f "$SITE_CONF" ]; then
+  if [ "$(stat -c %u "$SITE_CONF")" = 0 ] && ! stat -c %A "$SITE_CONF" | cut -c6,9 | grep -q w; then
+    while IFS='=' read -r k v; do
+      case "$k" in OFFICE_[A-Z_]*) ;; *) continue ;; esac
+      v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"; v="${v#\"}"; v="${v%\"}"
+      [ -n "$v" ] && [ -z "${!k:-}" ] && export "$k=$v"
+    done < <(grep -E '^[[:space:]]*OFFICE_[A-Z_]+=' "$SITE_CONF" | sed 's/^[[:space:]]*//')
+  else
+    echo "office-netns: ignoring $SITE_CONF (must be owned by root and not group/world-writable)" >&2
+  fi
+fi
 
 NS="${OFFICE_NS:-office}"
 CONFIG="${OFFICE_CONFIG:-/etc/openfortivpn/config}"
@@ -93,7 +110,11 @@ write_resolv() {
     out+="nameserver $ip"$'\n'
   done
   [ -n "$out" ] || return 0
-  if [ -n "${OFFICE_SEARCH:-}" ]; then out+="search $OFFICE_SEARCH"$'\n'; fi
+  if [ -n "${OFFICE_SEARCH:-}" ]; then
+    local search
+    search=$(printf '%s' "$OFFICE_SEARCH" | tr ',' ' ' | xargs)   # "a, b c" -> "a b c"
+    [ -n "$search" ] && out+="search $search"$'\n'
+  fi
   printf '%s' "$out" > "$f"      # in place, so running processes keep seeing the bind-mounted file
 }
 

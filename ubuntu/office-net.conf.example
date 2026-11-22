@@ -1,0 +1,16 @@
+# Optional site settings for office-netns. install.sh copies this to /etc/office-net.conf
+# (owner root, mode 644) if that file does not exist yet; edit it there, not in the repo.
+# Every value can also be set in the environment (environment wins). Leave unset for auto-detection.
+
+# DNS search suffixes inside the namespace, space- or comma-separated (quote them if there is more than one),
+# e.g. OFFICE_SEARCH="office-domain.example corp.office-domain.example"
+#OFFICE_SEARCH=
+
+# openfortivpn config file
+#OFFICE_CONFIG=/etc/openfortivpn/config
+
+# Fixed uplink / gateway / address / link type instead of auto-detection
+#OFFICE_IFACE=
+#OFFICE_GW=
+#OFFICE_ADDR=
+#OFFICE_LINK=

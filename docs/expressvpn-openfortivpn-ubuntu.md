@@ -17,6 +17,19 @@ Status as of 2026-10-13: the tunnel now runs inside a network namespace (`office
 | Script | `scripts/office-netns.sh` (repo at `/mnt/e/repos/office-net`); `install.sh` deploys it as `/usr/local/sbin/office-netns` (owner root, mode 755), which is the copy run as root |
 | openfortivpn config | `/etc/openfortivpn/config` (host, port, username, pinned `trusted-cert`) |
 
+## Values used in the commands
+
+The commands below use shell variables instead of addresses, so they work on any network. Set them once per terminal; they are read from your own config, nothing here is hard-coded:
+
+```bash
+FORTIGATE=$(sudo sed -n 's/^[[:space:]]*host[[:space:]]*=[[:space:]]*//p' /etc/openfortivpn/config)   # Fortigate gateway
+read -r DNS1 DNS2 _ < <(awk '/^nameserver/ {printf "%s ", $2}' /etc/netns/office/resolv.conf)            # internal DNS, once the VPN is up
+DOMAIN=$(sed -n 's/^[[:space:]]*OFFICE_SEARCH="\{0,1\}\([^ ",]*\).*/\1/p' /etc/office-net.conf)        # first internal suffix
+OFFICE_HOST=git.$DOMAIN                  # any internal host name
+echo "gateway=$FORTIGATE dns=$DNS1,$DNS2 domain=$DOMAIN host=$OFFICE_HOST"
+```
+Without the namespace (host workaround) `/etc/netns/office/resolv.conf` does not exist: set `DNS1=... DNS2=...` by hand from openfortivpn's "Got addresses ... ns [...]" line. Addresses that still appear in this doc (`203.0.113.10`, `10.30.x.x`, `198.51.100.x`, `192.168.x.x`) are placeholders in recorded results, not values to type.
+
 ## Why a namespace
 
 With openfortivpn in the root namespace, ExpressVPN interferes in two ways:
@@ -48,7 +61,7 @@ Example from 2026-10-13: `office ready: 192.168.10.254/24 via 192.168.10.1 on en
 cd /mnt/e/repos/office-net && bash install.sh   # deploys /usr/local/sbin/office-netns (again after every change to the script)
 sudo office-netns up          # create the namespace
 sudo office-netns vpn         # start openfortivpn inside it; asks for the VPN password; keep this terminal open
-sudo office-netns run <cmd>   # run a command inside the namespace as your user (e.g. run ping -c 3 10.30.63.3)
+sudo office-netns run <cmd>   # run a command inside the namespace as your user (e.g. run ping -c 3 "$DNS1")
 sudo office-netns status      # addresses, routes, DNS, whether ppp0 exists
 sudo office-netns refresh     # down + up; then start the tunnel again with "vpn"
 sudo office-netns down        # remove the namespace
@@ -58,15 +71,17 @@ sudo office-netns down        # remove the namespace
 
 - **Only commands started with `run` reach `10.30.*` and `10.31.*`.** Everything else keeps using ExpressVPN as normal.
 - **After changing networks** (another LAN, LAN to Wi-Fi or back, new DHCP network), run `refresh` and then `vpn` again. The namespace keeps the address and gateway it was built with.
-- Overrides (environment variables): `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR` (e.g. `192.168.0.200/24`), `OFFICE_LINK` (`macvlan` or `ipvlan`), `OFFICE_CONFIG`, `OFFICE_NS`, `OFFICE_SEARCH` (DNS search suffix), `OFFICE_WAIT` (seconds to wait for an uplink, default 20).
+- Settings: on the first run in a terminal, `bash install.sh` asks for the Fortigate host, port, username and certificate pin (it reads the certificate from the gateway and asks before pinning it) and writes `/etc/openfortivpn/config` (root, mode 600; other options already in the file are kept, a `password =` line is dropped). It also asks for the DNS search suffixes (space- or comma-separated) and writes `/etc/office-net.conf`. `bash install.sh --configure` asks again, with the current values as defaults.
+- Site settings: `/etc/office-net.conf` (created by `install.sh` from `ubuntu/office-net.conf.example`; unset values = auto-detect). It is only read when owned by root and not writable by others. Set `OFFICE_SEARCH="office-domain.example lab.office-domain.example"` there to get one or more DNS search suffixes in the namespace (written as one `search` line; spaces or commas both work).
+- Overrides (environment variables or `/etc/office-net.conf`; the environment wins): `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR` (e.g. `192.168.0.200/24`), `OFFICE_LINK` (`macvlan` or `ipvlan`), `OFFICE_CONFIG`, `OFFICE_NS`, `OFFICE_SEARCH` (DNS search suffixes, space- or comma-separated), `OFFICE_WAIT` (seconds to wait for an uplink, default 20).
 
 ## How to verify
 
 ```bash
-sudo ip netns exec office ping -c 5 203.0.113.10    # TTL should stay high (~247), not ~235 via ExpressVPN
-sudo ip netns exec office ping -c 3 10.30.63.3
-sudo ip netns exec office getent hosts intranet.office-domain.example
-sudo ip netns exec office ping -c 600 10.30.63.3 | tail -3    # ~10 min soak: want 0% loss and the vpn terminal still connected
+sudo ip netns exec office ping -c 5 "$FORTIGATE"    # TTL should stay high (~247), not ~235 via ExpressVPN
+sudo ip netns exec office ping -c 3 "$DNS1"
+sudo ip netns exec office getent hosts "$OFFICE_HOST"
+sudo ip netns exec office ping -c 600 "$DNS1" | tail -3    # ~10 min soak: want 0% loss and the vpn terminal still connected
 ```
 
 ## Troubleshooting
@@ -95,9 +110,9 @@ Cause: ExpressVPN's leak protection installs a reject for all port 53 traffic in
 Fix for use without the namespace: insert one narrow accept above the reject, scoped to the internal resolvers and `ppp*` only:
 
 ```bash
-sudo nft insert rule ip filter evpn.r.310.blockDNS oifname "ppp*" ip daddr { 10.30.63.3, 10.30.63.2 } accept
-sudo resolvectl dns ppp0 10.30.63.3 10.30.63.2
-sudo resolvectl domain ppp0 office-domain.example
+sudo nft insert rule ip filter evpn.r.310.blockDNS oifname "ppp*" ip daddr { $DNS1, $DNS2 } accept
+sudo resolvectl dns ppp0 "$DNS1" "$DNS2"
+sudo resolvectl domain ppp0 "$DOMAIN"
 ```
 
 ExpressVPN rebuilds its rules on reconnect, so this is automated in `/etc/ppp/ip-up.d/office-dns` (no dot in the filename; retries `resolvectl` up to 10 times, adds the nft rule only if missing). It runs each time `ppp0` comes up. If ExpressVPN reconnects while `ppp0` stays up, re-run `sudo /etc/ppp/ip-up.d/office-dns ppp0`.

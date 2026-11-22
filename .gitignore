@@ -1,0 +1,3 @@
+# site-specific values (resolver IPs, DNS suffix); see the *.example files
+scripts/office-dns.psd1
+office-net.conf

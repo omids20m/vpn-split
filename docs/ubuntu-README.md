@@ -20,6 +20,19 @@ Ubuntu counterpart of [windows-README.md](windows-README.md): ExpressVPN for gen
 
 *The office namespace has its own NIC on the LAN, so the Fortigate handshake never uses ExpressVPN.*
 
+## Values used in the commands
+
+The commands below use shell variables instead of addresses, so they work on any network. Set them once per terminal; they are read from your own config, nothing here is hard-coded:
+
+```bash
+FORTIGATE=$(sudo sed -n 's/^[[:space:]]*host[[:space:]]*=[[:space:]]*//p' /etc/openfortivpn/config)   # Fortigate gateway
+read -r DNS1 DNS2 _ < <(awk '/^nameserver/ {printf "%s ", $2}' /etc/netns/office/resolv.conf)            # internal DNS, once the VPN is up
+DOMAIN=$(sed -n 's/^[[:space:]]*OFFICE_SEARCH="\{0,1\}\([^ ",]*\).*/\1/p' /etc/office-net.conf)        # first internal suffix
+OFFICE_HOST=git.$DOMAIN                  # any internal host name
+echo "gateway=$FORTIGATE dns=$DNS1,$DNS2 domain=$DOMAIN host=$OFFICE_HOST"
+```
+Without the namespace (host workaround) `/etc/netns/office/resolv.conf` does not exist: set `DNS1=... DNS2=...` by hand from openfortivpn's "Got addresses ... ns [...]" line. Addresses that still appear in this doc (`203.0.113.10`, `10.30.x.x`, `198.51.100.x`, `192.168.x.x`) are placeholders in recorded results, not values to type.
+
 ## Why a namespace
 
 On the host, ExpressVPN breaks openfortivpn in two ways:
@@ -43,13 +56,13 @@ Inside a namespace, ExpressVPN's rules, routes and firewall (all in the host nam
 
 ```bash
 sudo apt install openfortivpn iputils-arping
-bash install.sh                        # deploys the root-owned copy /usr/local/sbin/office-netns
+bash install.sh                        # asks for VPN + namespace settings on first run; deploys /usr/local/sbin/office-netns
 sudo office-netns up         # creates the namespace and prints what it detected
 sudo office-netns vpn        # starts the tunnel; DNS is filled in once it is up
 sudo office-netns status
-sudo office-netns run ssh user@10.30.x.x
+sudo office-netns run ssh user@"$OFFICE_HOST"
 ```
-Overrides if detection is wrong: `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR`, `OFFICE_LINK` (macvlan or ipvlan), `OFFICE_SEARCH` (DNS search suffix), `OFFICE_CONFIG`. The `ip-up.d` DNS hook must stay disabled (step 2 below).
+Overrides if detection is wrong (environment, or `/etc/office-net.conf`, which `install.sh` creates from `ubuntu/office-net.conf.example`): `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR`, `OFFICE_LINK` (macvlan or ipvlan), `OFFICE_SEARCH` (DNS search suffixes, space- or comma-separated), `OFFICE_CONFIG`. The `ip-up.d` DNS hook must stay disabled (step 2 below).
 
 Always run the deployed copy (`/usr/local/sbin/office-netns`, owned by root), not `scripts/office-netns.sh` from the repo: the repo is on `/mnt/e` with no Unix permissions, so anything running as your user could change it and get root the next time you use sudo. Run `bash install.sh` again after editing the script.
 
@@ -71,11 +84,13 @@ Wi-Fi worked in the test: it uses ipvlan, which shares the Wi-Fi adapter's MAC. 
 
 Prerequisites: `sudo apt install openfortivpn iputils-arping`, `/etc/openfortivpn/config` filled in, wired `eno2`, ExpressVPN connected.
 
-1. Check the network and pick an unused address:
+1. Check the network and pick an unused address (set `ADDR` to a free one in your subnet):
 ```bash
-ip -br addr show eno2
-ip route show default
-sudo arping -c 2 -I eno2 192.168.0.200      # no reply means it is free
+read -r IFACE GW < <(ip -4 route show default | awk '{for(i=1;i<NF;i++){if($i=="dev")d=$(i+1); if($i=="via")g=$(i+1)}; print d, g; exit}')
+PREFIX=$(ip -4 -o addr show dev "$IFACE" | awk '{split($4,a,"/"); print a[2]; exit}')
+ip -br addr show "$IFACE"; echo "uplink=$IFACE gateway=$GW prefix=/$PREFIX"
+ADDR=<free address in that subnet>          # e.g. one near the top of the range
+sudo arping -c 2 -I "$IFACE" "$ADDR"        # no reply means it is free
 ```
 2. Disable the old DNS hook so pppd does not run it inside the namespace:
 ```bash
@@ -85,19 +100,19 @@ sudo mv /etc/ppp/ip-up.d/office-dns /etc/ppp/ip-up.d/office-dns.disabled
 ```bash
 NS=office
 sudo ip netns add $NS
-sudo ip link add link eno2 name mv-office type macvlan mode bridge
+sudo ip link add link "$IFACE" name mv-office type macvlan mode bridge
 sudo ip link set mv-office netns $NS
 sudo ip -n $NS link set lo up
 sudo ip -n $NS link set mv-office up
-sudo ip -n $NS addr add 192.168.0.200/24 dev mv-office
-sudo ip -n $NS route add default via 192.168.0.254
+sudo ip -n $NS addr add "$ADDR/$PREFIX" dev mv-office
+sudo ip -n $NS route add default via "$GW"
 sudo mkdir -p /etc/netns/$NS
-printf 'nameserver 10.30.63.3\nnameserver 10.30.63.2\n' | sudo tee /etc/netns/$NS/resolv.conf
+printf 'nameserver %s\nnameserver %s\n' "$DNS1" "$DNS2" | sudo tee /etc/netns/$NS/resolv.conf   # DNS1/DNS2 set by hand here (no tunnel yet)
 ```
 4. Check the gateway is reached directly:
 ```bash
-sudo ip netns exec office ping -c 5 192.168.0.254
-sudo ip netns exec office ping -c 10 203.0.113.10      # want ttl=247, a few ms
+sudo ip netns exec office ping -c 5 "$GW"
+sudo ip netns exec office ping -c 10 "$FORTIGATE"      # want ttl=247, a few ms
 ```
 5. Start the tunnel inside the namespace:
 ```bash
@@ -112,8 +127,8 @@ The address, gateway and interface in these manual commands are specific to the 
 Only processes started inside the namespace reach `10.30.*` and `10.31.*`:
 
 ```bash
-sudo ip netns exec office sudo -u "$USER" ssh user@10.30.x.x
-sudo ip netns exec office sudo -u "$USER" git clone git@git.office-domain.example:repo.git
+sudo ip netns exec office sudo -u "$USER" ssh user@"$OFFICE_HOST"
+sudo ip netns exec office sudo -u "$USER" git clone "git@$OFFICE_HOST:repo.git"
 sudo ip netns exec office sudo -u "$USER" firefox -no-remote -P office
 ```
 
@@ -174,9 +189,9 @@ Wired run through the script with Wi-Fi also connected (same day):
 DNS fix for running openfortivpn on the host with ExpressVPN connected (not needed in the namespace, where the hook must stay disabled):
 
 ```bash
-sudo nft insert rule ip filter evpn.r.310.blockDNS oifname "ppp*" ip daddr { 10.30.63.3, 10.30.63.2 } accept
-sudo resolvectl dns ppp0 10.30.63.3 10.30.63.2
-sudo resolvectl domain ppp0 office-domain.example
+sudo nft insert rule ip filter evpn.r.310.blockDNS oifname "ppp*" ip daddr { $DNS1, $DNS2 } accept
+sudo resolvectl dns ppp0 "$DNS1" "$DNS2"
+sudo resolvectl domain ppp0 "$DOMAIN"
 ```
 
 Automated by `/etc/ppp/ip-up.d/office-dns` (rename back from `.disabled`; the filename must not contain a dot to be run). This fixes DNS but not the tunnel drops.
