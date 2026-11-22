@@ -1,4 +1,0 @@
-# Install to: ~/bin/office-bashrc
-# Used by the "Terminal (Office VPN)" icon; marks the prompt as running in the namespace.
-[ -f ~/.bashrc ] && . ~/.bashrc
-PS1="\[\e[1;32m\][OFFICE]\[\e[0m\] $PS1"
