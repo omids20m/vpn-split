@@ -14,7 +14,7 @@ Status as of 2026-10-13: the tunnel now runs inside a network namespace (`office
 | Internal suffix | `office-domain.example` |
 | Physical NIC | `eno2` (Wi-Fi `wlo1` also present) |
 | ExpressVPN | Linux Qt app v14.3 (GUI + CLI) |
-| Script | `scripts/office-netns.sh` (repo at `/mnt/e/repos/office-net`), run as root |
+| Script | `scripts/office-netns.sh` (repo at `/mnt/e/repos/office-net`); `install.sh` deploys it as `/usr/local/sbin/office-netns` (owner root, mode 755), which is the copy run as root |
 | openfortivpn config | `/etc/openfortivpn/config` (host, port, username, pinned `trusted-cert`) |
 
 ## Why a namespace
@@ -45,14 +45,16 @@ Example from 2026-10-13: `office ready: 192.168.10.254/24 via 192.168.10.1 on en
 ## Usage
 
 ```bash
-cd /mnt/e/repos/office-net
-sudo bash scripts/office-netns.sh up          # create the namespace
-sudo bash scripts/office-netns.sh vpn         # start openfortivpn inside it; asks for the VPN password; keep this terminal open
-sudo bash scripts/office-netns.sh run <cmd>   # run a command inside the namespace as your user (e.g. run ping -c 3 10.30.63.3)
-sudo bash scripts/office-netns.sh status      # addresses, routes, DNS, whether ppp0 exists
-sudo bash scripts/office-netns.sh refresh     # down + up; then start the tunnel again with "vpn"
-sudo bash scripts/office-netns.sh down        # remove the namespace
+cd /mnt/e/repos/office-net && bash install.sh   # deploys /usr/local/sbin/office-netns (again after every change to the script)
+sudo office-netns up          # create the namespace
+sudo office-netns vpn         # start openfortivpn inside it; asks for the VPN password; keep this terminal open
+sudo office-netns run <cmd>   # run a command inside the namespace as your user (e.g. run ping -c 3 10.30.63.3)
+sudo office-netns status      # addresses, routes, DNS, whether ppp0 exists
+sudo office-netns refresh     # down + up; then start the tunnel again with "vpn"
+sudo office-netns down        # remove the namespace
 ```
+
+**Do not run the repo copy with sudo** (`sudo bash scripts/office-netns.sh ...`) except to test a change before deploying it. The repo is on `/mnt/e`, which has no Unix permissions, so any program running as your user could edit it; whatever it put there would run as root the next time you typed your sudo password. The desktop icons and the `office` alias use the root-owned copy. `bash install.sh --check` warns when the deployed copy differs from the repo or is writable by non-root.
 
 - **Only commands started with `run` reach `10.30.*` and `10.31.*`.** Everything else keeps using ExpressVPN as normal.
 - **After changing networks** (another LAN, LAN to Wi-Fi or back, new DHCP network), run `refresh` and then `vpn` again. The namespace keeps the address and gateway it was built with.

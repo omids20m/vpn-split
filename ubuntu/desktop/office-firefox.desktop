@@ -2,7 +2,7 @@
 Type=Application
 Name=Firefox (Office VPN)
 Comment=Firefox inside the office network namespace
-Exec=gnome-terminal --geometry=90x5 --title="Office Firefox" -- sudo bash @REPO@/scripts/office-netns.sh run @HOME@/firefox-office/firefox -no-remote -profile @HOME@/.mozilla-office
+Exec=gnome-terminal --geometry=90x5 --title="Office Firefox" -- sudo @NETNS@ run @HOME@/firefox-office/firefox -no-remote -profile @HOME@/.mozilla-office
 Icon=@HOME@/firefox-office/browser/chrome/icons/default/default128.png
 Terminal=false
 Categories=Network;

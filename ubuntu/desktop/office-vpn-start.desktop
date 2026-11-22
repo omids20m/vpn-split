@@ -2,7 +2,7 @@
 Type=Application
 Name=Office VPN (start)
 Comment=Build the office namespace and start the Fortigate tunnel
-Exec=gnome-terminal --geometry=90x5 --title="Office VPN" -- @HOME@/bin/office-vpn-start.sh
+Exec=gnome-terminal --geometry=90x5 --title="Office VPN" -- @VPNSTART@
 Icon=network-vpn
 Terminal=false
 Categories=Network;

@@ -43,12 +43,15 @@ Inside a namespace, ExpressVPN's rules, routes and firewall (all in the host nam
 
 ```bash
 sudo apt install openfortivpn iputils-arping
-sudo ./scripts/office-netns.sh up         # creates the namespace and prints what it detected
-sudo ./scripts/office-netns.sh vpn        # starts the tunnel; DNS is filled in once it is up
-sudo ./scripts/office-netns.sh status
-sudo ./scripts/office-netns.sh run ssh user@10.30.x.x
+bash install.sh                        # deploys the root-owned copy /usr/local/sbin/office-netns
+sudo office-netns up         # creates the namespace and prints what it detected
+sudo office-netns vpn        # starts the tunnel; DNS is filled in once it is up
+sudo office-netns status
+sudo office-netns run ssh user@10.30.x.x
 ```
 Overrides if detection is wrong: `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR`, `OFFICE_LINK` (macvlan or ipvlan), `OFFICE_SEARCH` (DNS search suffix), `OFFICE_CONFIG`. The `ip-up.d` DNS hook must stay disabled (step 2 below).
+
+Always run the deployed copy (`/usr/local/sbin/office-netns`, owned by root), not `scripts/office-netns.sh` from the repo: the repo is on `/mnt/e` with no Unix permissions, so anything running as your user could change it and get root the next time you use sudo. Run `bash install.sh` again after editing the script.
 
 Run on Wi-Fi (2026-10-03): `refresh` chose `wlo1`, `ipvlan`, `192.168.0.253/24` via `192.168.0.254`; `vpn` came up and wrote `10.30.63.3` and `10.30.63.2` into the namespace's `resolv.conf` by itself. Wired run through the script (Wi-Fi also connected): `refresh` chose `eno2`, `macvlan`, `192.168.0.253/24`, because the wired default route has the lower metric (20100 against 20600). Not run yet: a reboot, and `git`/`ssh` through `run`.
 
@@ -57,8 +60,8 @@ Run on Wi-Fi (2026-10-03): `refresh` chose `wlo1`, `ipvlan`, `192.168.0.253/24` 
 The namespace is tied to one uplink, subnet and gateway, and the tunnel's connection to the Fortigate starts from that address, so a network change always means a new namespace and a new tunnel:
 
 ```bash
-sudo ./scripts/office-netns.sh refresh    # down + up, re-detects interface, gateway, link type and address
-sudo ./scripts/office-netns.sh vpn
+sudo office-netns refresh    # down + up, re-detects interface, gateway, link type and address
+sudo office-netns vpn
 ```
 If both LAN and Wi-Fi are connected, the wired interface is used. Unplug the cable (or turn off wired) to use Wi-Fi.
 
@@ -114,7 +117,7 @@ sudo ip netns exec office sudo -u "$USER" git clone git@git.office-domain.exampl
 sudo ip netns exec office sudo -u "$USER" firefox -no-remote -P office
 ```
 
-`sudo -u "$USER"` keeps your keys and config. `sudo scripts/office-netns.sh run <command>` wraps this. The namespace default route goes straight to the LAN, not through ExpressVPN, so use it only for office tools.
+`sudo -u "$USER"` keeps your keys and config. `sudo office-netns run <command>` wraps this. The namespace default route goes straight to the LAN, not through ExpressVPN, so use it only for office tools.
 
 Teardown: stop openfortivpn (Ctrl-C), then `sudo ip netns del office` and `sudo rm -rf /etc/netns/office`.
 

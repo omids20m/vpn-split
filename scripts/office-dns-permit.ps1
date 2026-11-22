@@ -13,7 +13,7 @@
   internal resolvers.
 
 .USAGE (admin PowerShell, 64-bit)
-  .\office-dns-permit.ps1 -Install     # copy to C:\ProgramData\office, register SYSTEM task, start it
+  .\office-dns-permit.ps1 -Install     # copy to C:\Program Files\office (admin-only ACL), register SYSTEM task, start it
   .\office-dns-permit.ps1 -Uninstall   # remove task, permit filter and NRPT rule
   .\office-dns-permit.ps1 -Status      # show task, permit filter, NRPT rule, test lookup
   .\office-dns-permit.ps1              # apply once now and exit
@@ -34,7 +34,8 @@ $PermitPrefix   = 31
 $DnsSuffix      = '.office-domain.example'
 $TestHost       = 'intranet.office-domain.example'
 $KnownSublayer  = '1b0346a1-adc6-45a9-8014-8bb2d656c415'   # ExpressVPN sublayer seen on 2026-10-07
-$InstallDir     = Join-Path $env:ProgramData 'office'
+$InstallDir     = Join-Path $env:ProgramFiles 'office'   # admin-only; see Protect-InstallDir
+$LegacyDir      = Join-Path $env:ProgramData 'office'    # used before 2026-11-22; standard users can create folders there
 $ScriptName     = 'office-dns-permit.ps1'
 $TaskName       = 'office-dns-permit'
 $LogFile        = Join-Path $InstallDir 'dns-permit.log'
@@ -59,6 +60,46 @@ function Write-Log([string]$msg) {
 }
 
 if (-not (Test-Admin)) { throw 'Run this from an elevated (administrator) PowerShell.' }
+
+# The SYSTEM task runs the script from $InstallDir, so only SYSTEM and Administrators may write there.
+# Takes ownership and replaces the ACL even if the folder already existed (someone could have pre-created it).
+function Protect-InstallDir {
+  if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
+  $sys    = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'       # SYSTEM
+  $admins = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'   # BUILTIN\Administrators
+  $users  = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'   # BUILTIN\Users
+  $inh = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+  $acl = New-Object Security.AccessControl.DirectorySecurity
+  $acl.SetOwner($admins)
+  $acl.SetAccessRuleProtection($true, $false)      # no inherited entries
+  foreach ($r in @(
+      (New-Object Security.AccessControl.FileSystemAccessRule($sys,    'FullControl',    $inh, 'None', 'Allow')),
+      (New-Object Security.AccessControl.FileSystemAccessRule($admins, 'FullControl',    $inh, 'None', 'Allow')),
+      (New-Object Security.AccessControl.FileSystemAccessRule($users,  'ReadAndExecute', $inh, 'None', 'Allow')))) {
+    $acl.AddAccessRule($r)
+  }
+  Set-Acl -Path $InstallDir -AclObject $acl
+  # files already inside: owner Administrators, explicit entries dropped, inherit the folder ACL
+  if (Get-ChildItem $InstallDir -Force) {
+    icacls "$InstallDir\*" /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    icacls "$InstallDir\*" /reset /T /C /Q | Out-Null
+  }
+}
+
+# True when only SYSTEM / Administrators / TrustedInstaller can write to $InstallDir
+function Test-InstallDirSafe {
+  if (-not (Test-Path $InstallDir)) { return $false }
+  $acl = Get-Acl $InstallDir
+  $okSids = 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+  if ($okSids -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
+  $write = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, ChangePermissions, TakeOwnership'
+  foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+    if ($r.AccessControlType -ne 'Allow') { continue }
+    if ($okSids -contains $r.IdentityReference.Value) { continue }
+    if (($r.FileSystemRights -band $write) -ne 0) { return $false }
+  }
+  return $true
+}
 
 # ---------------- WFP helper ----------------
 if (-not ('Wfp' -as [type])) {
@@ -198,7 +239,7 @@ if ($Uninstall) {
   [void][Wfp]::Remove()
   Get-DnsClientNrptRule -ErrorAction SilentlyContinue | Where-Object { $_.Namespace -contains $DnsSuffix } |
     ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force }
-  Write-Log 'uninstalled: scheduled task, permit filter and NRPT rule removed (script and log left in place)'
+  Write-Log "uninstalled: scheduled task, permit filter and NRPT rule removed (script and log left in $InstallDir)"
   return
 }
 
@@ -212,6 +253,9 @@ if ($Status) {
   if ($r -eq $E_ALREADY_EXISTS) { 'present' }
   elseif ($r -eq 0) { 'was missing, just added' }
   else { 'add failed 0x{0:X8}' -f $r }
+  Write-Host "--- install folder ($InstallDir) ---"
+  if (Test-InstallDirSafe) { 'only SYSTEM/Administrators can write (ok)' } else { 'NOT locked down: run -Install again' }
+  if (Test-Path (Join-Path $LegacyDir $ScriptName)) { "old copy still in $LegacyDir (run -Install to remove it)" }
   Write-Host '--- NRPT ---'
   Get-DnsClientNrptRule -ErrorAction SilentlyContinue | Where-Object { $_.Namespace -contains $DnsSuffix } |
     Format-List Name, Namespace, NameServers
@@ -225,7 +269,8 @@ if ($Status) {
 }
 
 if ($Install) {
-  if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
+  Protect-InstallDir
+  if (-not (Test-InstallDirSafe)) { throw "could not restrict $InstallDir to SYSTEM and Administrators; not installing" }
   $dest = Join-Path $InstallDir $ScriptName
   if ($PSCommandPath -and ((Resolve-Path $PSCommandPath).Path -ne $dest)) { Copy-Item $PSCommandPath $dest -Force }
 
@@ -241,12 +286,19 @@ if ($Install) {
     -Settings $settings -Description 'Re-applies the WFP permit for DNS to the office resolvers so ExpressVPN leak protection does not block them.' `
     -Force | Out-Null
   Write-Log "installed scheduled task '$TaskName' (at startup + logon, SYSTEM, watch mode); script: $dest"
+  # older versions ran from ProgramData, which standard users can write to; remove that copy
+  $old = Join-Path $LegacyDir $ScriptName
+  if (Test-Path $old) { Remove-Item $old -Force; Write-Log "removed old copy $old (old logs left in $LegacyDir)" }
   Start-ScheduledTask -TaskName $TaskName
   Write-Log 'task started'
   return
 }
 
 # default / -Watch: apply (fresh), optionally keep re-checking
+# The task must only ever run a copy nobody but admins can change.
+if ($Watch -and $PSCommandPath -and ((Split-Path $PSCommandPath -Parent) -eq $InstallDir) -and -not (Test-InstallDirSafe)) {
+  Write-Log "refusing to run: $InstallDir is writable by non-admins (run -Install again)"; exit 1
+}
 Ensure-Nrpt
 [void][Wfp]::Remove()                 # start from a clean state; ignore "not found"
 $ok = Ensure-Permit

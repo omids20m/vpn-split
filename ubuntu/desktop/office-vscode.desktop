@@ -2,7 +2,7 @@
 Type=Application
 Name=VS Code (Office VPN)
 Comment=VS Code inside the office network namespace
-Exec=gnome-terminal --geometry=90x5 --title="Office VS Code" -- sudo bash @REPO@/scripts/office-netns.sh run code --new-window --user-data-dir @HOME@/.vscode-office --extensions-dir @HOME@/.vscode/extensions
+Exec=gnome-terminal --geometry=90x5 --title="Office VS Code" -- sudo @NETNS@ run code --new-window --user-data-dir @HOME@/.vscode-office --extensions-dir @HOME@/.vscode/extensions
 Icon=vscode
 Terminal=false
 Categories=Development;

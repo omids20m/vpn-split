@@ -8,12 +8,19 @@
 #   bash install.sh --uninstall remove the icons and ~/bin files (packages and VPN config are kept)
 #
 # Safe to run again: every step overwrites or skips what is already there.
+#
+# Security: everything that runs as root is copied to root-owned locations
+# (/usr/local/sbin/office-netns, /usr/local/bin/office-vpn-start). The repo on /mnt/e has no Unix
+# permissions, so any program running as you could edit scripts there; running them with sudo would hand
+# that program root. After changing scripts/office-netns.sh in the repo, run install.sh again to deploy it.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NETNS="$REPO/scripts/office-netns.sh"
 TPL="$REPO/ubuntu/desktop"
 BIN="$HOME/bin"
+SBIN_NETNS=/usr/local/sbin/office-netns          # root-owned copy of scripts/office-netns.sh
+VPN_START=/usr/local/bin/office-vpn-start        # root-owned launcher used by the "Office VPN" icon
 DESKTOP="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
 VPN_CONFIG=/etc/openfortivpn/config
 OLD_DNS_HOOK=/etc/ppp/ip-up.d/office-dns
@@ -29,7 +36,18 @@ die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 [ -d "$TPL" ]   || die "ubuntu/desktop/ templates not found next to install.sh"
 
 # copy a template, filling in the repo and home paths
-render() { sed -e "s|@REPO@|$REPO|g" -e "s|@HOME@|$HOME|g" "$1" > "$2"; }
+render() {
+  sed -e "s|@REPO@|$REPO|g" -e "s|@HOME@|$HOME|g" \
+      -e "s|@NETNS@|$SBIN_NETNS|g" -e "s|@VPNSTART@|$VPN_START|g" "$1" > "$2"
+}
+
+# copy a file to a root-owned path, mode 755 (install(1) sets owner, group and mode in one step)
+install_root() { sudo install -o root -g root -m 0755 "$1" "$2"; }
+
+# ok when the file exists, is owned by root and is not writable by group or others
+root_only() {
+  [ -f "$1" ] && [ "$(stat -c %u "$1")" = 0 ] && ! stat -c %A "$1" | cut -c6,9 | grep -q w
+}
 
 check() {
   step "Check"
@@ -38,9 +56,15 @@ check() {
   done
   if sudo test -r "$VPN_CONFIG"; then ok "$VPN_CONFIG"; else warn "$VPN_CONFIG missing (host, port, username, trusted-cert)"; fi
   if [ -e "$OLD_DNS_HOOK" ]; then warn "$OLD_DNS_HOOK is enabled (should be .disabled for the namespace)"; else ok "old DNS hook disabled"; fi
-  for f in office-vpn-start.sh office-bashrc; do
-    if [ -f "$BIN/$f" ]; then ok "$BIN/$f"; else warn "$BIN/$f missing"; fi
+  for f in "$SBIN_NETNS" "$VPN_START"; do
+    if root_only "$f"; then ok "$f (root-owned)"; else warn "$f missing or writable by non-root"; fi
   done
+  if root_only "$SBIN_NETNS" && ! cmp -s "$NETNS" "$SBIN_NETNS"; then
+    warn "$SBIN_NETNS differs from the repo copy (run install.sh again to deploy repo changes)"
+  fi
+  if [ -f "$BIN/office-bashrc" ]; then ok "$BIN/office-bashrc"; else warn "$BIN/office-bashrc missing"; fi
+  if [ -e "$BIN/office-vpn-start.sh" ]; then warn "$BIN/office-vpn-start.sh is left over from an older install (run install.sh to remove it)"; fi
+  if grep -q "office-netns.sh run" "$HOME/.bashrc" 2>/dev/null; then warn "'office' alias still points at the repo script (run install.sh)"; fi
   for i in "${ICONS[@]}"; do
     if [ -f "$DESKTOP/$i.desktop" ]; then ok "$DESKTOP/$i.desktop"; else warn "$DESKTOP/$i.desktop missing"; fi
   done
@@ -53,9 +77,10 @@ uninstall() {
   step "Uninstall"
   for i in "${ICONS[@]}"; do rm -f "$DESKTOP/$i.desktop"; done
   rm -f "$BIN/office-vpn-start.sh" "$BIN/office-bashrc"
+  sudo rm -f "$SBIN_NETNS" "$VPN_START"
   sed -i '/# office-net alias/,+1d' "$HOME/.bashrc" 2>/dev/null || true
-  ok "icons, ~/bin files and the office alias removed"
-  echo "Kept: packages, $VPN_CONFIG, ~/.mozilla-office, ~/.vscode-office. Run 'sudo bash $NETNS down' to remove a running namespace."
+  ok "icons, $SBIN_NETNS, $VPN_START, ~/bin files and the office alias removed"
+  echo "Kept: packages, $VPN_CONFIG, ~/.mozilla-office, ~/.vscode-office. Run 'sudo $SBIN_NETNS down' (before uninstalling) to remove a running namespace."
 }
 
 install() {
@@ -90,13 +115,20 @@ install() {
     ok "not enabled"
   fi
 
-  step "Scripts in $BIN"
+  step "Root-owned scripts"
+  local tmp
+  tmp=$(mktemp)
+  install_root "$NETNS" "$SBIN_NETNS"
+  render "$TPL/office-vpn-start.sh" "$tmp"
+  install_root "$tmp" "$VPN_START"
+  rm -f "$tmp"
+  ok "$SBIN_NETNS, $VPN_START (owner root, mode 755)"
+
+  step "Files in $BIN"
   mkdir -p "$BIN" "$HOME/.mozilla-office" "$HOME/.vscode-office"
-  chmod +x "$NETNS" 2>/dev/null || true   # repo may be on a drive without Unix permissions; icons call it with bash anyway
-  render "$TPL/office-vpn-start.sh" "$BIN/office-vpn-start.sh"
-  chmod +x "$BIN/office-vpn-start.sh"
-  render "$TPL/office-bashrc" "$BIN/office-bashrc"
-  ok "office-vpn-start.sh, office-bashrc"
+  rm -f "$BIN/office-vpn-start.sh"       # older installs ran this user-writable copy; now $VPN_START
+  render "$TPL/office-bashrc" "$BIN/office-bashrc"   # sourced by your own shell, never as root
+  ok "office-bashrc"
 
   step "Desktop icons in $DESKTOP"
   mkdir -p "$DESKTOP"
@@ -110,11 +142,11 @@ install() {
 
   step "Shell alias"
   if grep -q '# office-net alias' "$HOME/.bashrc" 2>/dev/null; then
-    sed -i "/# office-net alias/{n;s|.*|alias office='sudo bash $NETNS run'|}" "$HOME/.bashrc"
+    sed -i "/# office-net alias/{n;s|.*|alias office='sudo $SBIN_NETNS run'|}" "$HOME/.bashrc"
   else
-    printf '\n# office-net alias\nalias office='"'"'sudo bash %s run'"'"'\n' "$NETNS" >> "$HOME/.bashrc"
+    printf '\n# office-net alias\nalias office='"'"'sudo %s run'"'"'\n' "$SBIN_NETNS" >> "$HOME/.bashrc"
   fi
-  ok "alias office='sudo bash $NETNS run' (new terminals; e.g. 'office git pull')"
+  ok "alias office='sudo $SBIN_NETNS run' (new terminals; e.g. 'office git pull')"
 
   check
 
@@ -124,7 +156,8 @@ Done. Next:
   1. If an icon shows "Untrusted", right-click it and choose "Allow Launching".
   2. Click "Office VPN (start)", enter the sudo and VPN passwords, keep that window open.
   3. Open Firefox, Terminal or VS Code (Office VPN); each asks for sudo in a small window.
-  After changing networks: sudo bash $NETNS refresh, then click the VPN icon again.
+  After changing networks: sudo office-netns refresh, then click the VPN icon again.
+  After editing scripts/office-netns.sh in the repo: run 'bash install.sh' again to deploy it.
 EOF
 }
 

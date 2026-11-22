@@ -12,7 +12,7 @@ Status as of 2026-10-07: DNS fixed by hand and confirmed (`intranet.office-domai
 | Corporate routes | `10.30.0.0/16`, `10.31.0.0/16` |
 | Internal DNS | `10.30.63.3`, `10.30.63.2` |
 | Internal suffix | `office-domain.example` |
-| Script | `office-dns-permit.ps1` (installs to `C:\ProgramData\office\`, log in `dns-permit.log`) |
+| Script | `office-dns-permit.ps1` (installs to `C:\Program Files\office\` with an admin-only ACL, log in `dns-permit.log`; before 2026-11-22 it used `C:\ProgramData\office\`) |
 
 ## Symptom
 
@@ -40,7 +40,7 @@ How it was found: `netsh wfp show filters file=wfp.xml verbose=on`, then parse t
 
 ```powershell
 # elevated, 64-bit PowerShell. Use the Bypass form: the execution policy blocks the unsigned script otherwise.
-cd C:\ProgramData\office
+cd E:\repos\office-net\scripts      # -Install copies the script to C:\Program Files\office
 $ps = 'powershell -NoProfile -ExecutionPolicy Bypass -File .\office-dns-permit.ps1'
 iex "$ps -Install"     # register SYSTEM task "office-dns-permit" (startup + logon), start it
 iex "$ps -Status"      # task, permit filter, NRPT rule, test lookup, log tail
@@ -48,7 +48,20 @@ iex "$ps -Uninstall"   # remove task, permit filter and NRPT rule
 iex "$ps"              # apply once now
 ```
 
+Run `-Status` later from either folder; it also reports whether the install folder is locked down.
+
 Or type each command in full, e.g. `powershell -NoProfile -ExecutionPolicy Bypass -File .\office-dns-permit.ps1 -Status`. The scheduled task itself already launches the script with `-ExecutionPolicy Bypass`.
+
+## Install folder security
+
+The scheduled task runs the script as SYSTEM, so whoever can write to the install folder can run code as SYSTEM. The first version installed to `C:\ProgramData\office`; standard users can create folders under ProgramData, so another account (or malware) that created `office` there first would own it and could replace the script. Since 2026-11-22:
+
+- `-Install` uses `C:\Program Files\office`, takes ownership for Administrators and replaces the ACL even if the folder already existed: SYSTEM and Administrators full control, Users read and execute, no inherited entries. It refuses to install if the result still lets non-admins write.
+- `-Install` deletes the old `C:\ProgramData\office\office-dns-permit.ps1` (old logs stay there; delete the folder by hand if you like) and re-registers the task to point at the new copy.
+- In `-Watch` mode (what the task runs) the script exits without doing anything if the install folder has become writable by non-admins.
+- `-Status` shows whether the folder is locked down and whether the old ProgramData copy is still there.
+
+To move an existing install: run `-Install` once from the repo as above, then `-Status`.
 
 ## ExpressVPN / browser settings
 
@@ -67,8 +80,8 @@ Or type each command in full, e.g. `powershell -NoProfile -ExecutionPolicy Bypas
 ## Troubleshooting
 
 - "File ... is not digitally signed" / "cannot be loaded": execution policy. Run it through `powershell -NoProfile -ExecutionPolicy Bypass -File ...`, or `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` first (affects only that window). `Unblock-File` also clears the downloaded-from-internet flag.
-- `Cannot convert value "-2144206839" to type "System.UInt32"`: bug in the first version of the script (PowerShell reads `0x80320009` as a negative Int32). Fixed 2026-10-07 by using decimal constants (`2150760457` and `2150760455`). If an installed copy still has the hex form, replace it or copy the current script over `C:\ProgramData\office\office-dns-permit.ps1`.
-- Permit not applied: `-Status` shows it, and `C:\ProgramData\office\dns-permit.log` has the reason. Common cause: ExpressVPN not installed or its filters not created yet (the script retries every 30 s and re-discovers the sublayer at most every 5 minutes).
+- `Cannot convert value "-2144206839" to type "System.UInt32"`: bug in the first version of the script (PowerShell reads `0x80320009` as a negative Int32). Fixed 2026-10-07 by using decimal constants (`2150760457` and `2150760455`). If an installed copy still has the hex form, run `-Install` again from the repo.
+- Permit not applied: `-Status` shows it, and `C:\Program Files\office\dns-permit.log` has the reason. Common cause: ExpressVPN not installed or its filters not created yet (the script retries every 30 s and re-discovers the sublayer at most every 5 minutes).
 - WFP error codes seen: `0x80320009` filter already exists (fine), `0x80320007` sublayer not found (script falls back to discovery).
 
 ## Fallbacks
