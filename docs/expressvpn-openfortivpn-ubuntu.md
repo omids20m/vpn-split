@@ -1,6 +1,6 @@
 # ExpressVPN + openfortivpn coexistence on Ubuntu 24.04
 
-Companion to the Windows docs (`expressvpn-fortigate-coexistence.md`, and `expressvpn-fortigate-windows-dns.md` for the Windows version of the port 53 fix). Same goal: ExpressVPN for general traffic, Fortigate tunnel for the `office-domain.example` intranet.
+Companion to the Windows docs (`windows-README.md`, and `expressvpn-windows-dns.md` for the Windows version of the port 53 fix). Same goal: ExpressVPN for general traffic, Fortigate tunnel for the `office-domain.example` intranet.
 
 Status as of 2026-10-13: the tunnel now runs inside a network namespace (`office`) managed by `scripts/office-netns.sh` in the `office-net` repo. On 2026-10-13 the tunnel came up and the Fortigate DNS servers were applied inside the namespace. The script header records the tunnel stable for about 15 minutes on Wi-Fi (ipvlan) and about 12 minutes wired (macvlan). A longer soak, and name resolution from inside the namespace, are not yet recorded here.
 
@@ -105,7 +105,7 @@ sudo ip netns exec office ping -c 600 "$DNS1" | tail -3    # ~10 min soak: want 
 
 Symptom: `dig @10.30.63.3 ...` fails instantly with "connection refused", nothing appears on `ppp0` in tcpdump, and it works with ExpressVPN closed.
 
-Cause: ExpressVPN's leak protection installs a reject for all port 53 traffic in nft chain `evpn.r.310.blockDNS` (table `ip filter`). Neither the kill switch toggle nor app or IP bypass exempts DNS from it. (Windows has the same block as WFP filters; see `expressvpn-fortigate-windows-dns.md`.) Packets sent from inside the `office` namespace do not pass through that chain.
+Cause: ExpressVPN's leak protection installs a reject for all port 53 traffic in nft chain `evpn.r.310.blockDNS` (table `ip filter`). Neither the kill switch toggle nor app or IP bypass exempts DNS from it. (Windows has the same block as WFP filters; see `expressvpn-windows-dns.md`.) Packets sent from inside the `office` namespace do not pass through that chain.
 
 Fix for use without the namespace: insert one narrow accept above the reject, scoped to the internal resolvers and `ppp*` only:
 

@@ -21,15 +21,16 @@ Install: `sudo apt install openfortivpn iputils-arping`. Full commands, test res
 
 Limits: wired and Wi-Fi are tested on one network; a network change needs `refresh` and a new tunnel; only processes started in the namespace reach the intranet. The earlier veth + NAT variant was not needed and was not tested.
 
-## Windows: FortiClient with ExpressVPN (tested and working)
-See [windows-README.md](windows-README.md) for the full tested procedure. In short:
-- ExpressVPN split tunneling: bypass the three FortiClient executables and the FortiGate gateway IP (/32). Never add internal subnets to the IP list.
-- DNS: an NRPT rule sends the internal domain to the internal DNS servers, and browser DNS-over-HTTPS is turned off.
-- Connect ExpressVPN first, then FortiClient.
+## Windows: ExpressVPN always on, office over the LAN or through FortiClient
+See [windows-README.md](windows-README.md) for the full procedure. In short:
+- ExpressVPN stays connected: split tunneling on, All Other Apps = Use VPN.
+- Office network mode (default, not yet tested): the LAN/Wi-Fi already reaches the office; the office ranges are in ExpressVPN's IP bypass list, so office traffic leaves through the physical NIC.
+- FortiClient mode (optional, tested and working): bypass the three FortiClient executables and the FortiGate gateway IP (/32), and remove the office ranges from the IP list (they would hijack routes away from the Forti tunnel). Connect ExpressVPN first, then FortiClient.
+- DNS, both modes: `office-dns-permit.ps1` adds NRPT rules for the internal domain and WFP permits for port 53 to the internal DNS servers ([expressvpn-windows-dns.md](expressvpn-windows-dns.md)); browser DNS-over-HTTPS is turned off.
 
-Windows has no equivalent of Linux network namespaces for this, so split tunneling plus NRPT is the working approach.
+Windows has no equivalent of Linux network namespaces for this, so split tunneling plus NRPT and the port 53 permit is the working approach.
 
 ## Verification checklist
 - Host public IP is the ExpressVPN exit (both OSes).
-- Office host reachable by name and IP from the office path only.
-- Disconnect each VPN in turn; the other keeps working.
+- Office host reachable by name and IP from the office path only (Windows: the physical NIC in office network mode, the Forti adapter in FortiClient mode).
+- Disconnect the office VPN (FortiClient / openfortivpn); ExpressVPN keeps working. Disconnect ExpressVPN; office access keeps working.
