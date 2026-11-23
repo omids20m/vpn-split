@@ -3,10 +3,10 @@
 # plus desktop icons for the VPN, a terminal, Firefox and VS Code inside it.
 #
 # Run as your normal user from the repo (it uses sudo where needed):
-#   bash install.sh             install / update everything
-#   bash install.sh --check     only report what is installed and what is missing
-#   bash install.sh --configure  ask for the VPN and site settings again (current values are the defaults), then install
-#   bash install.sh --uninstall remove the icons and ~/bin files (packages and VPN config are kept)
+#   bash ubuntu/install.sh             install / update everything
+#   bash ubuntu/install.sh --check     only report what is installed and what is missing
+#   bash ubuntu/install.sh --configure  ask for the VPN and site settings again (current values are the defaults), then install
+#   bash ubuntu/install.sh --uninstall remove the icons and ~/bin files (packages and VPN config are kept)
 #
 # Settings: when /etc/openfortivpn/config or /etc/office-net.conf is missing and the script runs in a terminal,
 # it asks for the values (Fortigate host, port, username, certificate pin; DNS search suffixes) and writes the
@@ -17,14 +17,15 @@
 # Security: everything that runs as root is copied to root-owned locations
 # (/usr/local/sbin/office-netns, /usr/local/bin/office-vpn-start). The repo on /mnt/e has no Unix
 # permissions, so any program running as you could edit scripts there; running them with sudo would hand
-# that program root. After changing scripts/office-netns.sh in the repo, run install.sh again to deploy it.
+# that program root. After changing ubuntu/office-netns.sh in the repo, run ubuntu/install.sh again to deploy it.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NETNS="$REPO/scripts/office-netns.sh"
-TPL="$REPO/ubuntu/desktop"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ubuntu/ folder of the repo
+REPO="$(dirname "$HERE")"
+NETNS="$HERE/office-netns.sh"
+TPL="$HERE/desktop"
 BIN="$HOME/bin"
-SBIN_NETNS=/usr/local/sbin/office-netns          # root-owned copy of scripts/office-netns.sh
+SBIN_NETNS=/usr/local/sbin/office-netns          # root-owned copy of ubuntu/office-netns.sh
 VPN_START=/usr/local/bin/office-vpn-start        # root-owned launcher used by the "Office VPN" icon
 DESKTOP="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
 VPN_CONFIG=/etc/openfortivpn/config
@@ -38,8 +39,8 @@ step() { printf '\n== %s\n' "$*"; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -ne 0 ] || die "run as your normal user, not with sudo (it calls sudo itself)"
-[ -f "$NETNS" ] || die "scripts/office-netns.sh not found next to install.sh"
-[ -d "$TPL" ]   || die "ubuntu/desktop/ templates not found next to install.sh"
+[ -f "$NETNS" ] || die "office-netns.sh not found next to install.sh"
+[ -d "$TPL" ]   || die "desktop/ templates not found next to install.sh"
 
 # copy a template, filling in the repo and home paths
 render() {
@@ -103,7 +104,7 @@ configure_vpn() {
 
   tmp=$(mktemp)
   {
-    echo "# written by office-net install.sh; edit with 'bash install.sh --configure'"
+    echo "# written by office-net install.sh; edit with 'bash ubuntu/install.sh --configure'"
     echo "host = $host"
     echo "port = $port"
     echo "username = $user"
@@ -123,7 +124,7 @@ configure_site() {
   echo "  Namespace settings (everything else is detected automatically)"
   search=$(ask "DNS search suffixes inside the namespace, space- or comma-separated ('-' = none)" "$cur" '^[A-Za-z0-9.-]+([ ,]+[A-Za-z0-9.-]+)*$')
   search=$(printf '%s' "$search" | tr ',' ' ' | xargs)
-  src="$SITE_CONF"; [ -f "$src" ] || src="$REPO/ubuntu/office-net.conf.example"
+  src="$SITE_CONF"; [ -f "$src" ] || src="$HERE/office-net.conf.example"
   tmp=$(mktemp)
   if [ -n "$search" ]; then
     sed -E "s|^[[:space:]]*#?[[:space:]]*OFFICE_SEARCH=.*|OFFICE_SEARCH=\"$search\"|" "$src" > "$tmp"
@@ -147,11 +148,11 @@ check() {
     if root_only "$f"; then ok "$f (root-owned)"; else warn "$f missing or writable by non-root"; fi
   done
   if root_only "$SBIN_NETNS" && ! cmp -s "$NETNS" "$SBIN_NETNS"; then
-    warn "$SBIN_NETNS differs from the repo copy (run install.sh again to deploy repo changes)"
+    warn "$SBIN_NETNS differs from the repo copy (run ubuntu/install.sh again to deploy repo changes)"
   fi
   if [ -f "$BIN/office-bashrc" ]; then ok "$BIN/office-bashrc"; else warn "$BIN/office-bashrc missing"; fi
-  if [ -e "$BIN/office-vpn-start.sh" ]; then warn "$BIN/office-vpn-start.sh is left over from an older install (run install.sh to remove it)"; fi
-  if grep -q "office-netns.sh run" "$HOME/.bashrc" 2>/dev/null; then warn "'office' alias still points at the repo script (run install.sh)"; fi
+  if [ -e "$BIN/office-vpn-start.sh" ]; then warn "$BIN/office-vpn-start.sh is left over from an older install (run ubuntu/install.sh to remove it)"; fi
+  if grep -q "office-netns.sh run" "$HOME/.bashrc" 2>/dev/null; then warn "'office' alias still points at the repo script (run ubuntu/install.sh)"; fi
   for i in "${ICONS[@]}"; do
     if [ -f "$DESKTOP/$i.desktop" ]; then ok "$DESKTOP/$i.desktop"; else warn "$DESKTOP/$i.desktop missing"; fi
   done
@@ -185,11 +186,11 @@ install() {
 
   step "openfortivpn config"
   if sudo test -r "$VPN_CONFIG" && [ "$RECONFIGURE" -eq 0 ]; then
-    ok "$VPN_CONFIG exists (change it with: bash install.sh --configure)"
+    ok "$VPN_CONFIG exists (change it with: bash ubuntu/install.sh --configure)"
   elif [ "$INTERACTIVE" -eq 1 ]; then
     configure_vpn
   else
-    warn "$VPN_CONFIG is missing. Run 'bash install.sh --configure' in a terminal, or create it (no password in it):"
+    warn "$VPN_CONFIG is missing. Run 'bash ubuntu/install.sh --configure' in a terminal, or create it (no password in it):"
     echo "        host = <fortigate-host>"
     echo "        port = <port>"
     echo "        username = <user>"
@@ -206,11 +207,11 @@ install() {
 
   step "Site settings"
   if [ -f "$SITE_CONF" ] && [ "$RECONFIGURE" -eq 0 ]; then
-    ok "$SITE_CONF exists (change it with: bash install.sh --configure)"
+    ok "$SITE_CONF exists (change it with: bash ubuntu/install.sh --configure)"
   elif [ "$INTERACTIVE" -eq 1 ]; then
     configure_site
   else
-    sudo install -o root -g root -m 0644 "$REPO/ubuntu/office-net.conf.example" "$SITE_CONF"
+    sudo install -o root -g root -m 0644 "$HERE/office-net.conf.example" "$SITE_CONF"
     ok "$SITE_CONF created from ubuntu/office-net.conf.example (all values commented out = auto-detect)"
   fi
 
@@ -256,7 +257,7 @@ Done. Next:
   2. Click "Office VPN (start)", enter the sudo and VPN passwords, keep that window open.
   3. Open Firefox, Terminal or VS Code (Office VPN); each asks for sudo in a small window.
   After changing networks: sudo office-netns refresh, then click the VPN icon again.
-  After editing scripts/office-netns.sh in the repo: run 'bash install.sh' again to deploy it.
+  After editing ubuntu/office-netns.sh in the repo: run 'bash ubuntu/install.sh' again to deploy it.
 EOF
 }
 
@@ -265,5 +266,5 @@ case "${1:-}" in
   --configure)  [ "$INTERACTIVE" -eq 1 ] || die "--configure needs a terminal"; RECONFIGURE=1; install ;;
   --check)      check ;;
   --uninstall)  uninstall ;;
-  *) die "usage: bash install.sh [--configure | --check | --uninstall]" ;;
+  *) die "usage: bash ubuntu/install.sh [--configure | --check | --uninstall]" ;;
 esac

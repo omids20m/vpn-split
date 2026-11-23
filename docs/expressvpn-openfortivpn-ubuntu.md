@@ -2,7 +2,7 @@
 
 Companion to the Windows docs (`windows-README.md`, and `expressvpn-windows-dns.md` for the Windows version of the port 53 fix). Same goal: ExpressVPN for general traffic, Fortigate tunnel for the `office-domain.example` intranet.
 
-Status as of 2026-10-13: the tunnel now runs inside a network namespace (`office`) managed by `scripts/office-netns.sh` in the `office-net` repo. On 2026-10-13 the tunnel came up and the Fortigate DNS servers were applied inside the namespace. The script header records the tunnel stable for about 15 minutes on Wi-Fi (ipvlan) and about 12 minutes wired (macvlan). A longer soak, and name resolution from inside the namespace, are not yet recorded here.
+Status as of 2026-10-13: the tunnel now runs inside a network namespace (`office`) managed by `ubuntu/office-netns.sh` in the `office-net` repo. On 2026-10-13 the tunnel came up and the Fortigate DNS servers were applied inside the namespace. The script header records the tunnel stable for about 15 minutes on Wi-Fi (ipvlan) and about 12 minutes wired (macvlan). A longer soak, and name resolution from inside the namespace, are not yet recorded here.
 
 ## Environment
 
@@ -14,7 +14,7 @@ Status as of 2026-10-13: the tunnel now runs inside a network namespace (`office
 | Internal suffix | `office-domain.example` |
 | Physical NIC | `eno2` (Wi-Fi `wlo1` also present) |
 | ExpressVPN | Linux Qt app v14.3 (GUI + CLI) |
-| Script | `scripts/office-netns.sh` (repo at `/mnt/e/repos/office-net`); `install.sh` deploys it as `/usr/local/sbin/office-netns` (owner root, mode 755), which is the copy run as root |
+| Script | `ubuntu/office-netns.sh` (repo at `/mnt/e/repos/office-net`); `ubuntu/install.sh` deploys it as `/usr/local/sbin/office-netns` (owner root, mode 755), which is the copy run as root |
 | openfortivpn config | `/etc/openfortivpn/config` (host, port, username, pinned `trusted-cert`) |
 
 ## Values used in the commands
@@ -58,7 +58,7 @@ Example from 2026-10-13: `office ready: 192.168.10.254/24 via 192.168.10.1 on en
 ## Usage
 
 ```bash
-cd /mnt/e/repos/office-net && bash install.sh   # deploys /usr/local/sbin/office-netns (again after every change to the script)
+cd /mnt/e/repos/office-net && bash ubuntu/install.sh   # deploys /usr/local/sbin/office-netns (again after every change to the script)
 sudo office-netns up          # create the namespace
 sudo office-netns vpn         # start openfortivpn inside it; asks for the VPN password; keep this terminal open
 sudo office-netns run <cmd>   # run a command inside the namespace as your user (e.g. run ping -c 3 "$DNS1")
@@ -67,12 +67,12 @@ sudo office-netns refresh     # down + up; then start the tunnel again with "vpn
 sudo office-netns down        # remove the namespace
 ```
 
-**Do not run the repo copy with sudo** (`sudo bash scripts/office-netns.sh ...`) except to test a change before deploying it. The repo is on `/mnt/e`, which has no Unix permissions, so any program running as your user could edit it; whatever it put there would run as root the next time you typed your sudo password. The desktop icons and the `office` alias use the root-owned copy. `bash install.sh --check` warns when the deployed copy differs from the repo or is writable by non-root.
+**Do not run the repo copy with sudo** (`sudo bash ubuntu/office-netns.sh ...`) except to test a change before deploying it. The repo is on `/mnt/e`, which has no Unix permissions, so any program running as your user could edit it; whatever it put there would run as root the next time you typed your sudo password. The desktop icons and the `office` alias use the root-owned copy. `bash ubuntu/install.sh --check` warns when the deployed copy differs from the repo or is writable by non-root.
 
 - **Only commands started with `run` reach `10.30.*` and `10.31.*`.** Everything else keeps using ExpressVPN as normal.
 - **After changing networks** (another LAN, LAN to Wi-Fi or back, new DHCP network), run `refresh` and then `vpn` again. The namespace keeps the address and gateway it was built with.
-- Settings: on the first run in a terminal, `bash install.sh` asks for the Fortigate host, port, username and certificate pin (it reads the certificate from the gateway and asks before pinning it) and writes `/etc/openfortivpn/config` (root, mode 600; other options already in the file are kept, a `password =` line is dropped). It also asks for the DNS search suffixes (space- or comma-separated) and writes `/etc/office-net.conf`. `bash install.sh --configure` asks again, with the current values as defaults.
-- Site settings: `/etc/office-net.conf` (created by `install.sh` from `ubuntu/office-net.conf.example`; unset values = auto-detect). It is only read when owned by root and not writable by others. Set `OFFICE_SEARCH="office-domain.example lab.office-domain.example"` there to get one or more DNS search suffixes in the namespace (written as one `search` line; spaces or commas both work).
+- Settings: on the first run in a terminal, `bash ubuntu/install.sh` asks for the Fortigate host, port, username and certificate pin (it reads the certificate from the gateway and asks before pinning it) and writes `/etc/openfortivpn/config` (root, mode 600; other options already in the file are kept, a `password =` line is dropped). It also asks for the DNS search suffixes (space- or comma-separated) and writes `/etc/office-net.conf`. `bash ubuntu/install.sh --configure` asks again, with the current values as defaults.
+- Site settings: `/etc/office-net.conf` (created by `ubuntu/install.sh` from `ubuntu/office-net.conf.example`; unset values = auto-detect). It is only read when owned by root and not writable by others. Set `OFFICE_SEARCH="office-domain.example lab.office-domain.example"` there to get one or more DNS search suffixes in the namespace (written as one `search` line; spaces or commas both work).
 - Overrides (environment variables or `/etc/office-net.conf`; the environment wins): `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR` (e.g. `192.168.0.200/24`), `OFFICE_LINK` (`macvlan` or `ipvlan`), `OFFICE_CONFIG`, `OFFICE_NS`, `OFFICE_SEARCH` (DNS search suffixes, space- or comma-separated), `OFFICE_WAIT` (seconds to wait for an uplink, default 20).
 
 ## How to verify
@@ -89,7 +89,7 @@ sudo ip netns exec office ping -c 600 "$DNS1" | tail -3    # ~10 min soak: want 
 | Symptom | Cause | Fix |
 |---|---|---|
 | openfortivpn: `connect: No route to host`; `ip -n office link show of-office` shows `NO-CARRIER`; pings from the namespace say "Destination Host Unreachable" from the namespace's own address | The namespace was built for a different network than the host is on now. Seen 2026-10-13: namespace had `192.168.20.254/24` via `192.168.20.35` while `eno2` was on `192.168.10.0/24` | `refresh`, then `vpn`. Since 2026-10-13 `vpn` checks this first and stops with a message if the link has no carrier or the uplink interface or gateway changed |
-| `scripts/office-netns.sh: line 1: watcher: unbound variable` after the tunnel exits | Bug in the original script: `watcher` was a `local` variable used by an EXIT trap that runs after the function returned. It also left the background DNS watcher running every time | Fixed 2026-10-13 (global `WATCHER_PID`, cleanup function). Clear old strays with the tunnel stopped: `sudo pkill -f '[o]ffice-netns.sh vpn'` (or reboot) |
+| `ubuntu/office-netns.sh: line 1: watcher: unbound variable` after the tunnel exits | Bug in the original script: `watcher` was a `local` variable used by an EXIT trap that runs after the function returned. It also left the background DNS watcher running every time | Fixed 2026-10-13 (global `WATCHER_PID`, cleanup function). Clear old strays with the tunnel stopped: `sudo pkill -f '[o]ffice-netns.sh vpn'` (or reboot) |
 | `namespace office already exists` | `up` run twice | `refresh` or `down` |
 | `no usable uplink` | no physical interface with an IPv4 address and a default gateway within `OFFICE_WAIT` | connect the network, or set `OFFICE_IFACE` / `OFFICE_GW` |
 | `no free address found in <net>` | `arping` found no free address | set `OFFICE_ADDR` |

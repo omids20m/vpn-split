@@ -46,7 +46,7 @@ What the fix needs: ExpressVPN installed (its filters are what the permits attac
 
 ### Configuration
 
-The script has no addresses or domain names in it. It takes them from parameters or from `office-dns.psd1` next to the script; parameters win. `office-dns.psd1` is git-ignored; copy `scripts\office-dns.example.psd1` to start:
+The script has no addresses or domain names in it. It takes them from parameters or from `office-dns.psd1` next to the script; parameters win. `office-dns.psd1` is git-ignored; copy `windows\office-dns.example.psd1` to start:
 
 | Setting | Parameter | Meaning |
 |---|---|---|
@@ -62,7 +62,7 @@ You do not have to edit the file by hand: when `-Install` runs in a console and 
 
 ```powershell
 # elevated, 64-bit PowerShell. Use the Bypass form: the execution policy blocks the unsigned script otherwise.
-cd E:\repos\office-net\scripts      # -Install copies the script and config to C:\Program Files\office-net
+cd E:\repos\office-net\windows      # -Install copies the script and config to C:\Program Files\office-net
 $ps = 'powershell -NoProfile -ExecutionPolicy Bypass -File .\office-dns-permit.ps1'
 iex "$ps -Install"     # asks for missing values; registers SYSTEM task "office-dns-permit" (startup + logon), starts it
 iex "$ps -Configure"   # change the DNS servers / suffix / test host, then reinstall

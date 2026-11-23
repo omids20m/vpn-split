@@ -2,7 +2,7 @@
 
 Ubuntu counterpart of [windows-README.md](windows-README.md): ExpressVPN for general traffic, openfortivpn for the `office-domain.example` intranet.
 
-**Status (2026-10-03):** Working with a network namespace, on wired and on Wi-Fi. openfortivpn runs inside a namespace with its own NIC on the LAN; ExpressVPN stays connected on the host. Wired (macvlan, commands run by hand): about 10 minutes, about 290 pings to the Fortigate, all TTL 247, tunnel never dropped. Wi-Fi (ipvlan, run through `scripts/office-netns.sh`): the script detected the interface, gateway, link type and a free address, the tunnel came up, the DNS servers were picked up automatically, and a soak of about 15 minutes (about 445 pings) stayed at TTL 247 with no drop. Wired through the script, with Wi-Fi also connected: the script chose the wired interface and `macvlan`, the tunnel came up, DNS was set automatically, and the Fortigate path stayed at TTL 247 for about 12 minutes (about 353 pings, 1.6 to 4.8 ms). Not yet tested: a long soak (hours), `git`, `ssh` and a browser as the normal user, and a reboot.
+**Status (2026-10-03):** Working with a network namespace, on wired and on Wi-Fi. openfortivpn runs inside a namespace with its own NIC on the LAN; ExpressVPN stays connected on the host. Wired (macvlan, commands run by hand): about 10 minutes, about 290 pings to the Fortigate, all TTL 247, tunnel never dropped. Wi-Fi (ipvlan, run through `ubuntu/office-netns.sh`): the script detected the interface, gateway, link type and a free address, the tunnel came up, the DNS servers were picked up automatically, and a soak of about 15 minutes (about 445 pings) stayed at TTL 247 with no drop. Wired through the script, with Wi-Fi also connected: the script chose the wired interface and `macvlan`, the tunnel came up, DNS was set automatically, and the Fortigate path stayed at TTL 247 for about 12 minutes (about 353 pings, 1.6 to 4.8 ms). Not yet tested: a long soak (hours), `git`, `ssh` and a browser as the normal user, and a reboot.
 
 ## Environment
 
@@ -44,7 +44,7 @@ Inside a namespace, ExpressVPN's rules, routes and firewall (all in the host nam
 
 ## Setup with the script (auto-detects the network)
 
-`scripts/office-netns.sh` works out the network-specific values itself, so nothing is hard-coded to `eno2` or `192.168.0.x`:
+`ubuntu/office-netns.sh` works out the network-specific values itself, so nothing is hard-coded to `eno2` or `192.168.0.x`:
 
 | Value | How it is found |
 |---|---|
@@ -56,15 +56,15 @@ Inside a namespace, ExpressVPN's rules, routes and firewall (all in the host nam
 
 ```bash
 sudo apt install openfortivpn iputils-arping
-bash install.sh                        # asks for VPN + namespace settings on first run; deploys /usr/local/sbin/office-netns
+bash ubuntu/install.sh                        # asks for VPN + namespace settings on first run; deploys /usr/local/sbin/office-netns
 sudo office-netns up         # creates the namespace and prints what it detected
 sudo office-netns vpn        # starts the tunnel; DNS is filled in once it is up
 sudo office-netns status
 sudo office-netns run ssh user@"$OFFICE_HOST"
 ```
-Overrides if detection is wrong (environment, or `/etc/office-net.conf`, which `install.sh` creates from `ubuntu/office-net.conf.example`): `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR`, `OFFICE_LINK` (macvlan or ipvlan), `OFFICE_SEARCH` (DNS search suffixes, space- or comma-separated), `OFFICE_CONFIG`. The `ip-up.d` DNS hook must stay disabled (step 2 below).
+Overrides if detection is wrong (environment, or `/etc/office-net.conf`, which `ubuntu/install.sh` creates from `ubuntu/office-net.conf.example`): `OFFICE_IFACE`, `OFFICE_GW`, `OFFICE_ADDR`, `OFFICE_LINK` (macvlan or ipvlan), `OFFICE_SEARCH` (DNS search suffixes, space- or comma-separated), `OFFICE_CONFIG`. The `ip-up.d` DNS hook must stay disabled (step 2 below).
 
-Always run the deployed copy (`/usr/local/sbin/office-netns`, owned by root), not `scripts/office-netns.sh` from the repo: the repo is on `/mnt/e` with no Unix permissions, so anything running as your user could change it and get root the next time you use sudo. Run `bash install.sh` again after editing the script.
+Always run the deployed copy (`/usr/local/sbin/office-netns`, owned by root), not `ubuntu/office-netns.sh` from the repo: the repo is on `/mnt/e` with no Unix permissions, so anything running as your user could change it and get root the next time you use sudo. Run `bash ubuntu/install.sh` again after editing the script.
 
 Run on Wi-Fi (2026-10-03): `refresh` chose `wlo1`, `ipvlan`, `192.168.0.253/24` via `192.168.0.254`; `vpn` came up and wrote `10.30.63.3` and `10.30.63.2` into the namespace's `resolv.conf` by itself. Wired run through the script (Wi-Fi also connected): `refresh` chose `eno2`, `macvlan`, `192.168.0.253/24`, because the wired default route has the lower metric (20100 against 20600). Not run yet: a reboot, and `git`/`ssh` through `run`.
 

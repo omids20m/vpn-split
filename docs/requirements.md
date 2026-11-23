@@ -13,13 +13,13 @@ Keep ExpressVPN connected for general internet traffic and reach office resource
 ## Ubuntu-specific
 - R6. openfortivpn must not replace the host default route or /etc/resolv.conf.
 - R7. Office apps are started explicitly inside an isolated network namespace.
-- R8. Setup and teardown are scripted and repeatable (scripts/office-netns.sh).
+- R8. Setup and teardown are scripted and repeatable (ubuntu/office-netns.sh).
 
 ## Windows-specific
 - R9. ExpressVPN stays connected in both Windows modes and must not break office routes or DNS (see windows-README.md).
 - R9a. Office network mode (default): office traffic leaves through the physical NIC; the office ranges are in ExpressVPN's IP bypass list.
 - R9b. FortiClient mode: internal subnets must never be in ExpressVPN's IP bypass list, since that hijacks routes away from the Forti tunnel; only the FortiClient apps and the gateway /32 are bypassed.
-- R9c. Internal DNS is resolved via NRPT rules plus WFP permits for port 53 to the office DNS servers (scripts/office-dns-permit.ps1), the same in both modes; browser DNS-over-HTTPS is off.
+- R9c. Internal DNS is resolved via NRPT rules plus WFP permits for port 53 to the office DNS servers (windows/office-dns-permit.ps1), the same in both modes; browser DNS-over-HTTPS is off.
 - R10. No changes that need a reboot to undo.
 
 ## Non-functional

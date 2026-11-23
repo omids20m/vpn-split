@@ -18,17 +18,17 @@ in its IP bypass list (see [Switching modes](#4-switching-modes)).
 
 ## Values used in the commands
 
-The commands below use PowerShell variables instead of addresses. Set them once per window; they are read from your own (git-ignored) `scripts\office-dns.psd1`, see [expressvpn-windows-dns.md](expressvpn-windows-dns.md):
+The commands below use PowerShell variables instead of addresses. Set them once per window; they are read from your own (git-ignored) `windows\office-dns.psd1`, see [expressvpn-windows-dns.md](expressvpn-windows-dns.md):
 
 ```powershell
-$cfg        = Import-PowerShellDataFile E:\repos\office-net\scripts\office-dns.psd1
+$cfg        = Import-PowerShellDataFile E:\repos\office-net\windows\office-dns.psd1
 $Dns        = @($cfg.Resolvers)                 # internal DNS servers
 $Domain     = @($cfg.DnsSuffix)[0]              # first internal suffix
 $OfficeHost = "git.$Domain"                     # any internal host name
 $Lan        = 'Ethernet'                        # your physical adapter: 'Ethernet' or 'Wi-Fi' (Get-NetAdapter shows yours)
 $Forti      = 'Ethernet 4 Forti'                # FortiClient adapter, FortiClient mode only
 $CorpRoutes = { param($r) $r.DestinationPrefix -like '10.3[01].*' }   # your corporate ranges; adjust the pattern
-$ps         = 'powershell -NoProfile -ExecutionPolicy Bypass -File E:\repos\office-net\scripts\office-dns-permit.ps1'
+$ps         = 'powershell -NoProfile -ExecutionPolicy Bypass -File E:\repos\office-net\windows\office-dns-permit.ps1'
 ```
 Addresses that still appear in this doc (`203.0.113.10`, `10.30.x.x`, `198.51.100.x`, `192.168.x.x`) are placeholders in recorded output, not values to type.
 
@@ -77,7 +77,7 @@ scheduled task re-applies the permits at startup and logon. Install once, from a
 64-bit PowerShell:
 
 ```powershell
-cd E:\repos\office-net\scripts
+cd E:\repos\office-net\windows
 $ps = 'powershell -NoProfile -ExecutionPolicy Bypass -File .\office-dns-permit.ps1'
 iex "$ps -Install"     # asks for the DNS servers, suffixes and test host if missing
 iex "$ps -Status"      # config, task, permit filters, NRPT rules, test lookup
